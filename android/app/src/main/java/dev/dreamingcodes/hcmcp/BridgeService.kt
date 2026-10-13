@@ -19,7 +19,11 @@ class BridgeService : Service() {
     private const val TAG = "HCBridge"
     private const val CHANNEL = "bridge"
     @Volatile var state: String = "stopped"; private set
-    fun start(ctx: Context) { val i = Intent(ctx, BridgeService::class.java); if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) }
+    fun start(ctx: Context) {
+      val i = Intent(ctx, BridgeService::class.java)
+      try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) }
+      catch (e: Exception) { Log.w(TAG, "cannot start bridge now: ${e.javaClass.simpleName}") }
+    }
     fun stop(ctx: Context) = ctx.stopService(Intent(ctx, BridgeService::class.java))
   }
 
@@ -38,6 +42,7 @@ class BridgeService : Service() {
     super.onCreate()
     val nm = getSystemService(NotificationManager::class.java)
     nm.createNotificationChannel(NotificationChannel(CHANNEL, "Health bridge", NotificationManager.IMPORTANCE_LOW))
+    notify("starting…") // promote to foreground ASAP
   }
 
   private fun notify(text: String) {
@@ -51,18 +56,22 @@ class BridgeService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     notify("connecting…")
     stopped = false
-    if (ws == null) connect()
+    Log.i(TAG, "onStartCommand ws=${ws != null}")
+    if (ws == null) scope.launch { // keystore/prefs access off the main thread
+      try { connect() } catch (e: Throwable) { Log.e(TAG, "connect failed: ${e.javaClass.simpleName}: ${e.message}"); scheduleReconnect("connect failed") }
+    }
     return START_STICKY
   }
 
   private fun connect() {
     val url = Settings.workerUrl(this); val token = Settings.deviceToken(this)
     if (url.isBlank() || token.isBlank()) { notify("not configured"); return }
+    Log.i(TAG, "connecting")
     val wsUrl = url.replaceFirst(Regex("^http"), "ws") + "/phone/connect"
     val req = Request.Builder().url(wsUrl).header("Authorization", "Bearer $token").build()
     ws = http.newWebSocket(req, object : WebSocketListener() {
       override fun onOpen(webSocket: WebSocket, response: Response) {
-        backoffMs = 1000L; notify("connected")
+        backoffMs = 1000L; notify("connected"); Log.i(TAG, "connected")
         webSocket.send(JSONObject().put("type", "hello").put("app_version", BuildConfig.VERSION_NAME)
           .put("device", "${Build.MANUFACTURER} ${Build.MODEL}").toString())
         pingJob?.cancel()
@@ -88,12 +97,13 @@ class BridgeService : Service() {
       override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = scheduleReconnect("closed $code")
       override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
         if (response?.code == 401) { notify("rejected: bad device token"); ws = null; return }
-        scheduleReconnect("error: ${t.javaClass.simpleName}")
+        scheduleReconnect("error: ${t.javaClass.simpleName}: ${t.message}")
       }
     })
   }
 
   private fun scheduleReconnect(why: String) {
+    Log.w(TAG, "disconnected: $why")
     pingJob?.cancel(); ws = null
     if (stopped) return
     val wait = backoffMs; backoffMs = (backoffMs * 2).coerceAtMost(60_000)

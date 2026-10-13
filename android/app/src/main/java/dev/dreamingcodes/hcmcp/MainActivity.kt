@@ -16,6 +16,13 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
   private lateinit var status: TextView
+  private var pendingStart = false
+
+  override fun onResume() {
+    super.onResume()
+    // FGS may only be started once we are the top (resumed) activity.
+    if (pendingStart) { pendingStart = false; status.postDelayed({ BridgeService.start(this); refresh() }, 500) }
+  }
   private val hcPerms = registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { refresh() }
   private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -42,6 +49,12 @@ class MainActivity : AppCompatActivity() {
     btn("Refresh status") { refresh() }
     col.addView(status)
     setContentView(ScrollView(this).apply { addView(col) })
+    // Debug-only automation hook for emulator tests (adb am start --es worker_url … --es device_token … --ez seed true --ez start true).
+    if (BuildConfig.DEBUG) intent?.let { i ->
+      if (i.hasExtra("worker_url")) { Settings.save(this, i.getStringExtra("worker_url")!!, i.getStringExtra("device_token") ?: ""); url.setText(Settings.workerUrl(this)) }
+      if (i.getBooleanExtra("seed", false)) lifecycleScope.launch { try { TestData.insert(HealthConnectClient.getOrCreate(this@MainActivity)); toast("Test data inserted") } catch (e: Exception) { toast("Insert failed: ${e.message}") } }
+      if (i.getBooleanExtra("start", false)) { Settings.setEnabled(this, true); pendingStart = true }
+    }
     refresh()
   }
 
