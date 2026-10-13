@@ -1,0 +1,41 @@
+# Phone ⇄ Worker protocol (v1)
+
+Live pull only: the Worker stores **no health data**. The Durable Object `PhoneHub` (name `phone`) keeps only
+`lastSeen`, `connectedAt` and the last `hello` metadata.
+
+## Connection
+- `GET wss://<worker>/phone/connect` with header `Authorization: Bearer <DEVICE_TOKEN>`.
+- Worker compares `sha256_hex(DEVICE_TOKEN)` with secret `DEVICE_TOKEN_HASH` (constant time). Bad/missing → HTTP 401, no upgrade.
+- Only one phone socket is live. A new connection closes the old one with code `4000 "replaced by new connection"`.
+- All frames are UTF-8 JSON text.
+
+## Phone → Worker
+| Frame | Meaning |
+|---|---|
+| `{"type":"hello","app_version":"0.1.0","device":"Google Pixel 8"}` | Sent right after open. Stored for `get_phone_status`. |
+| `{"type":"ping"}` | Keep-alive, every ~30 s. Answered with `{"type":"pong"}` by the runtime **without waking the DO** (hibernation auto-response). Byte-exact match required. |
+| `{"id":"…","result":{…}}` | Successful answer to a request. |
+| `{"id":"…","error":{"code":"…","message":"…"}}` | Failed answer. Codes: `permission_denied`, `bad_params`, `unknown_method`, `internal`. |
+
+## Worker → Phone
+`{"id":"<uuid>","method":"<name>","params":{…}}`. The phone must answer with the same `id` within 10 s
+(else the MCP tool returns "phone did not answer within 10s"). Requests may arrive concurrently; answer in any order.
+Frames with a `type` field from the Worker (e.g. `pong`) are not requests.
+
+### Common params
+`start`, `end`: ISO-8601 with offset (`2026-10-12T00:00:00+02:00`) or `Z`. Half-open `[start, end)`.
+`timezone`: IANA zone, default `Europe/Amsterdam`; used for day buckets and for formatting output times.
+
+### Methods and result shapes
+| method | extra params | result |
+|---|---|---|
+| `get_steps` | `bucket`: `none`/`hour`/`day` (default day) | `{unit, timezone, bucket, total, buckets:[{date\|start, steps}]}` |
+| `get_heart_rate` | `bucket` | `{unit:"bpm", overall:{min_bpm,avg_bpm,max_bpm,samples}, buckets:[{date\|start,…}], resting:[{time,bpm}]}` |
+| `get_sleep` | – | `{sessions:[{start,end,night_of,duration_min,title,stage_minutes:{deep,light,rem,awake,…},source}]}` |
+| `get_exercise_sessions` | – | `{sessions:[{start,end,duration_min,type,title,distance_m,active_kcal,avg_bpm,max_bpm,steps,source}]}` |
+| `get_weight` | – | `{unit:"kg", records:[{time,kg}]}` |
+| `get_nutrition` | – | `{days:[{date,kcal,protein_g,carbs_g,fat_g,entries}], entries:[…]}` |
+| `read_records` | `recordType` (Steps, HeartRate, RestingHeartRate, SleepSession, ExerciseSession, Distance, ActiveCaloriesBurned, TotalCaloriesBurned, Weight, Nutrition, Hydration), `limit` ≤1000 | `{recordType, count, records:[{source, time\|start,end, …type fields}]}` |
+| `get_phone_status` | – | `{app_version, device, android_sdk, battery, health_connect, granted[], missing[]}` |
+
+Values Health Connect lacks are `null`. The phone app must never log values, only method names.
