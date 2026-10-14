@@ -7,7 +7,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -107,13 +106,11 @@ fun BridgeScreen() {
   val urlFocus = remember { FocusRequester() }
   val tokenFocus = remember { FocusRequester() }
   var hc by remember { mutableStateOf<HcInfo?>(null) }
-  var batteryExempt by remember { mutableStateOf(isIgnoringBattery(ctx)) }
   var lastReq by remember { mutableStateOf<Pair<Long, String>?>(null) }
   var tick by remember { mutableIntStateOf(0) }
 
   suspend fun refresh() {
     hc = withContext(Dispatchers.IO) { readHc(ctx) }
-    batteryExempt = isIgnoringBattery(ctx)
     lastReq = withContext(Dispatchers.IO) { Settings.lastRequest(ctx) }
   }
   LaunchedEffect(Unit) {
@@ -135,7 +132,6 @@ fun BridgeScreen() {
   LaunchedEffect(status.lastRequestAt) { status.lastRequestAt?.let { lastReq = it to (status.lastRequestMethod ?: "") } }
 
   val permLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { scope.launch { refresh() } }
-  val batteryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { batteryExempt = isIgnoringBattery(ctx) }
 
   val configured = savedUrl.isNotBlank() && savedToken.isNotBlank()
   val dirty = url.trim().trimEnd('/') != savedUrl || token.trim() != savedToken
@@ -246,19 +242,6 @@ fun BridgeScreen() {
         }
       }
 
-      // ---------- Battery ----------
-      ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          SectionTitle(Icons.Outlined.BatteryChargingFull, "Battery")
-          CheckRow(batteryExempt, if (batteryExempt) "Unrestricted: Android won't put the bridge to sleep" else "Optimized: Android may cut the connection while the phone sleeps")
-          if (!batteryExempt) OutlinedButton(onClick = {
-            @SuppressLint("BatteryLife")
-            val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}"))
-            runCatching { batteryLauncher.launch(i) }
-          }, modifier = Modifier.fillMaxWidth()) { Text("Allow running in background") }
-        }
-      }
-
       Text("Only method names and times are shown here. Health values are never logged or stored by the bridge.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -312,7 +295,6 @@ private fun ago(t: Long): String {
   val s = (System.currentTimeMillis() - t) / 1000
   return when { s < 60 -> "just now"; s < 3600 -> "${s / 60} min ago"; s < 86400 -> "${s / 3600} h ago"; else -> DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t)) }
 }
-private fun isIgnoringBattery(ctx: Context) = (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(ctx.packageName)
 private suspend fun readHc(ctx: Context): HcInfo {
   val sdk = HealthConnectClient.getSdkStatus(ctx)
   if (sdk != HealthConnectClient.SDK_AVAILABLE) return HcInfo(sdk, 0, HealthHandler.READ_PERMS.size, false, false)

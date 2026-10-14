@@ -4,7 +4,7 @@ val ksProps = Properties().apply { rootProject.file("keystore.properties").takeI
 android {
   namespace = "dev.dreamingcodes.hcmcp"
   compileSdk = 36
-  defaultConfig { applicationId = "dev.dreamingcodes.hcmcp"; minSdk = 28; targetSdk = 35; versionCode = 4; versionName = "0.3.1" }
+  defaultConfig { applicationId = "dev.dreamingcodes.hcmcp"; minSdk = 28; targetSdk = 35; versionCode = 5; versionName = "0.3.2" }
   signingConfigs {
     create("release") {
       if (ksProps.isNotEmpty()) {
