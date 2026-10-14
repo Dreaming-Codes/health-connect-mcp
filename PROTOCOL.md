@@ -1,26 +1,27 @@
-# Phone ⇄ Worker protocol (v1)
+# Phone ⇄ Worker protocol (v2, push only)
 
-Live pull only: the Worker stores **no health data**. The Durable Object `PhoneHub` (name `phone`) keeps only
-`lastSeen`, `connectedAt` and the last `hello` metadata.
+Live pull, push only. The Worker stores **no health data**. The Durable Object `PhoneHub` (name `phone`) keeps only
+the phone's FCM token, `lastSeen`, the last push latency, device metadata, a cached Google OAuth token and in-flight
+request ids (in memory). There is no persistent connection.
 
-## Connection
-- `GET wss://<worker>/phone/connect` with header `Authorization: Bearer <DEVICE_TOKEN>`.
-- Worker compares `sha256_hex(DEVICE_TOKEN)` with secret `DEVICE_TOKEN_HASH` (constant time). Bad/missing → HTTP 401, no upgrade.
-- Only one phone socket is live. A new connection closes the old one with code `4000 "replaced by new connection"`.
-- All frames are UTF-8 JSON text.
+All phone → Worker calls use `Authorization: Bearer <DEVICE_TOKEN>`. The Worker compares `sha256_hex(token)` with the
+secret `DEVICE_TOKEN_HASH` in constant time, and a bad or missing token gets `401`.
 
-## Phone → Worker
-| Frame | Meaning |
-|---|---|
-| `{"type":"hello","app_version":"0.1.0","device":"Google Pixel 8"}` | Sent right after open. Stored for `get_phone_status`. |
-| `{"type":"ping"}` | Keep-alive, every ~30 s. Answered with `{"type":"pong"}` by the runtime **without waking the DO** (hibernation auto-response). Byte-exact match required. |
-| `{"id":"…","result":{…}}` | Successful answer to a request. |
-| `{"id":"…","error":{"code":"…","message":"…"}}` | Failed answer. Codes: `permission_denied`, `bad_params`, `unknown_method`, `internal`. |
+## 1. Register: `POST /phone/register`
+Body `{"fcm_token":"…","app_version":"0.3.1","device":"Google Pixel","mode":"push"}` → `200 {"ok":true,"push_configured":true}`.
+Sent when the user taps **Register device** and on every FCM token refresh (`onNewToken`).
 
-## Worker → Phone
-`{"id":"<uuid>","method":"<name>","params":{…}}`. The phone must answer with the same `id` within 10 s
-(else the MCP tool returns "phone did not answer within 10s"). Requests may arrive concurrently; answer in any order.
-Frames with a `type` field from the Worker (e.g. `pong`) are not requests.
+## 2. Request (Worker → phone, FCM)
+For each MCP tool call the DO creates a UUID and sends a high-priority FCM **data** message (TTL 20 s) via FCM HTTP v1:
+`data = {"id":"<uuid>","method":"get_steps","params":"<JSON string>"}`. The message never contains health data.
+
+## 3. Answer: `POST /phone/result/<id>`
+Body `{"result":{…}}` or `{"error":{"code":"…","message":"…"}}` → `200 {"ok":true}`, or `410` when the id is unknown or has expired.
+Error codes are `permission_denied`, `bad_params`, `unknown_method`, `timeout` and `internal`. The app answers within about 15 s, inside `onMessageReceived`.
+
+The Worker waits up to `PUSH_TIMEOUT_MS` (default 20 s). If FCM reports the token `UNREGISTERED`, the token is
+dropped and the tool says to re-open the app. Reads happen while the app is in the background, so the app requests
+Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
 
 ### Common params
 `start`, `end`: always sent to the phone as ISO-8601 with an explicit offset (`2026-10-12T00:00:00+02:00`) or `Z`. The Worker accepts plain dates (`2026-10-12`) and local date-times without offset (`2026-10-12T08:00`) from MCP clients and normalizes them using `timezone`. Half-open `[start, end)`.
@@ -38,22 +39,12 @@ Frames with a `type` field from the Worker (e.g. `pong`) are not requests.
 | `read_records` | `recordType` (Steps, HeartRate, RestingHeartRate, SleepSession, ExerciseSession, Distance, ActiveCaloriesBurned, TotalCaloriesBurned, Weight, Nutrition, Hydration), `limit` ≤1000 | `{recordType, count, records:[{source, time\|start,end, …type fields}]}` |
 | `get_phone_status` | – | `{app_version, device, android_sdk, battery, health_connect, granted[], missing[]}` |
 
-Values Health Connect lacks are `null`. The phone app must never log values, only method names.
+Values Health Connect lacks are omitted or `null`. The phone app must never log values, only method names.
 
-## Push mode (default since app 0.3.0)
-No persistent connection. When no WebSocket is live, the Worker wakes the phone with FCM.
 
-1. **Register**: `POST /phone/register` with `Authorization: Bearer <DEVICE_TOKEN>`,
-   body `{"fcm_token":"…","app_version":"0.3.0","device":"Google Pixel","mode":"push"}` → `{"ok":true,"push_configured":true}`.
-   The app re-sends this on FCM token refresh (`onNewToken`) and when the user taps Register.
-2. **Request**: the DO creates a request id and sends a high-priority FCM **data** message (TTL 20 s) containing only
-   `id`, `method`, `params` (JSON string). It never contains health data.
-3. **Answer**: the phone runs the query (≤15 s inside `onMessageReceived`) and calls `POST /phone/result/<id>` with the
-   device token, body `{"result":{…}}` or `{"error":{"code","message"}}` (same shapes as above). Responses: `200 {"ok":true}`,
-   `410` when the id is unknown or expired.
-4. The Worker waits up to 20 s (`PUSH_TIMEOUT_MS`). If FCM says the token is `UNREGISTERED` the stored token is dropped.
+`get_phone_status` (MCP) returns `{mode:"push"|"none", push_registered, push_registered_at, last_push:{latency_ms,at},
+last_seen, device}` plus `phone` (the phone's own answer, which takes one push round trip) when registered.
 
-Routing: a live WebSocket (the "Always-on connection" toggle in the app) is preferred, and push is the fallback.
-`get_phone_status` reports `mode` (`websocket`/`push`/`none`), `push_registered_at`, `last_push.latency_ms`.
-Background reads require Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
-Worker secret `FCM_SERVICE_ACCOUNT` holds the Firebase service-account JSON. OAuth tokens are cached in DO storage.
+## Secrets (Worker)
+`MCP_TOKEN`, `DEVICE_TOKEN_HASH`, `FCM_SERVICE_ACCOUNT` (Firebase service-account JSON; RS256 JWT is signed with WebCrypto
+and the OAuth token is cached in DO storage). Diagnostic: `GET /admin/fcm-selftest?token=<fcm token>` with the MCP token.

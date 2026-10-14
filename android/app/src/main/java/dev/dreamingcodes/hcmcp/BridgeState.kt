@@ -4,21 +4,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 
-enum class Phase { STOPPED, CONNECTING, CONNECTED, OFFLINE, REJECTED }
-
 data class BridgeStatus(
-  val phase: Phase = Phase.STOPPED,
-  val lastError: String? = null,
-  val retryInSec: Long? = null,
   val lastRequestAt: Long? = null,
   val lastRequestMethod: String? = null,
-  val connectedSince: Long? = null,
   val pushRegisteredAt: Long? = null,
   val pushError: String? = null,
   val registering: Boolean = false,
 )
 
-/** Process-wide bridge status for the UI. Holds method names and timestamps only, never health values. */
+/** Process-wide status for the UI. Holds method names and timestamps only, never health values. */
 object BridgeState {
   private val _s = MutableStateFlow(BridgeStatus())
   val status: StateFlow<BridgeStatus> = _s

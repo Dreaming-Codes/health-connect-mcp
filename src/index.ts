@@ -8,7 +8,6 @@ export interface Env {
   PHONE: DurableObjectNamespace<PhoneHub>;
   DEVICE_TOKEN_HASH: string; // hex sha256 of the device token
   MCP_TOKEN: string;
-  PHONE_TIMEOUT_MS?: string;
   PUSH_TIMEOUT_MS?: string;
   FCM_SERVICE_ACCOUNT?: string; // service-account JSON
 }
@@ -37,41 +36,10 @@ const unauthorized = () =>
 
 export class PhoneError extends Error {}
 
-/** One instance ("phone") per user. Holds the phone's hibernatable WebSocket. */
+/** One instance ("phone") per user. Holds the FCM token, OAuth cache and in-flight push requests. */
 export class PhoneHub extends DurableObject<Env> {
-  private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; via: "ws" | "push"; sentAt: number }>();
+  private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; sentAt: number }>();
   private oauth?: { token: string; expiresAt: number };
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    // Answered by the runtime without waking the DO.
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
-  }
-
-  async fetch(req: Request): Promise<Response> {
-    if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("expected websocket", { status: 426 });
-    // Only one live phone socket: replace older ones.
-    for (const old of this.ctx.getWebSockets("phone")) {
-      try { old.close(4000, "replaced by new connection"); } catch {}
-    }
-    const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1], ["phone"]);
-    await this.ctx.storage.put("lastSeen", Date.now());
-    await this.ctx.storage.put("connectedAt", Date.now());
-    return new Response(null, { status: 101, webSocket: pair[0] });
-  }
-
-  async webSocketMessage(ws: WebSocket, msg: string | ArrayBuffer): Promise<void> {
-    await this.ctx.storage.put("lastSeen", Date.now());
-    let data: any;
-    try { data = JSON.parse(typeof msg === "string" ? msg : new TextDecoder().decode(msg)); } catch { return; }
-    if (data?.type === "hello") {
-      await this.ctx.storage.put("device", { app_version: data.app_version, device: data.device, permissions: data.permissions, ts: Date.now() });
-      return;
-    }
-    if (typeof data?.id !== "string") return;
-    await this.settle(data.id, data);
-  }
 
   /** Resolve a pending request from either transport. Returns false if unknown/expired. */
   async settle(id: string, data: any): Promise<boolean> {
@@ -81,7 +49,7 @@ export class PhoneHub extends DurableObject<Env> {
     clearTimeout(p.timer);
     const latency = Date.now() - p.sentAt;
     await this.ctx.storage.put("lastSeen", Date.now());
-    if (p.via === "push") await this.ctx.storage.put("lastPush", { latency_ms: latency, at: Date.now() });
+    await this.ctx.storage.put("lastPush", { latency_ms: latency, at: Date.now() });
     if (data?.error) p.reject(new PhoneError(`phone error ${data.error.code ?? ""}: ${data.error.message ?? "unknown"}`.trim()));
     else p.resolve(data?.result);
     return true;
@@ -120,57 +88,27 @@ export class PhoneHub extends DurableObject<Env> {
     try { return JSON.parse(this.env.FCM_SERVICE_ACCOUNT); } catch { return undefined; }
   }
 
-  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    await this.ctx.storage.put("lastSeen", Date.now());
-    try { ws.close(code, reason); } catch {}
-  }
-  async webSocketError(ws: WebSocket): Promise<void> {
-    await this.ctx.storage.put("lastSeen", Date.now());
-  }
-
-  private liveSocket(): WebSocket | undefined {
-    return this.ctx.getWebSockets("phone").find((w) => w.readyState === WebSocket.OPEN);
-  }
-
   private async lastSeenMs(): Promise<number | undefined> {
-    let t = (await this.ctx.storage.get<number>("lastSeen")) ?? undefined;
-    for (const w of this.ctx.getWebSockets("phone")) {
-      const a = this.ctx.getWebSocketAutoResponseTimestamp(w)?.getTime();
-      if (a && (!t || a > t)) t = a;
-    }
-    return t;
+    return (await this.ctx.storage.get<number>("lastSeen")) ?? undefined;
   }
 
   async status(): Promise<Record<string, unknown>> {
     const ls = await this.lastSeenMs();
     const fcm = await this.ctx.storage.get<{ token: string; registered_at: number }>("fcm");
-    const live = !!this.liveSocket();
     return {
-      mode: live ? "websocket" : fcm ? "push" : "none",
-      online: live,
+      mode: fcm ? "push" : "none",
       push_registered: !!fcm,
       push_registered_at: fcm ? new Date(fcm.registered_at).toISOString() : null,
       last_push: ((p) => (p ? { latency_ms: p.latency_ms, at: new Date(p.at).toISOString() } : null))(await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush")),
       last_seen: ls ? new Date(ls).toISOString() : null,
-      connected_at: ((c) => (c ? new Date(c).toISOString() : null))(await this.ctx.storage.get<number>("connectedAt")),
       device: (await this.ctx.storage.get("device")) ?? null,
     };
   }
 
   /** Forward a request to the phone and await its answer. */
   async call(method: string, params: unknown): Promise<unknown> {
-    const ws = this.liveSocket();
     const id = crypto.randomUUID();
     const lastSeen = async () => { const ls = await this.lastSeenMs(); return ls ? new Date(ls).toISOString() : "never"; };
-    if (ws) {
-      const timeoutMs = Number(this.env.PHONE_TIMEOUT_MS ?? 10000);
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { this.pending.delete(id); reject(new PhoneError(`phone did not answer within ${timeoutMs / 1000}s (method ${method})`)); }, timeoutMs);
-        this.pending.set(id, { resolve, reject, timer, via: "ws", sentAt: Date.now() });
-        try { ws.send(JSON.stringify({ id, method, params })); }
-        catch (e) { clearTimeout(timer); this.pending.delete(id); reject(new PhoneError(`send to phone failed: ${e}`)); }
-      });
-    }
     // Push path: wake the phone via FCM; it POSTs the answer to /phone/result/<id>.
     const fcm = await this.ctx.storage.get<{ token: string }>("fcm");
     const sa = this.serviceAccount();
@@ -181,7 +119,7 @@ export class PhoneHub extends DurableObject<Env> {
         this.pending.delete(id);
         reject(new PhoneError(`phone did not answer push within ${timeoutMs / 1000}s (method ${method}; last seen ${await lastSeen()})`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, via: "push", sentAt: Date.now() });
+      this.pending.set(id, { resolve, reject, timer, sentAt: Date.now() });
     });
     try {
       // Data only: request id, method, params. Never health data.
@@ -277,7 +215,7 @@ function buildServer(env: Env): McpServer {
   });
   server.registerTool("get_phone_status", { description: "Whether the phone is connected, last-seen time, app/permission info.", inputSchema: {} }, async () => {
     const s: Record<string, unknown> = await hub.status();
-    if (s.online || s.push_registered) {
+    if (s.push_registered) {
       try { s.phone = await hub.call("get_phone_status", {}); } catch (e: any) { s.phone_error = String(e?.message ?? e); }
     }
     return { content: [{ type: "text" as const, text: JSON.stringify(s, null, 2) }] };
@@ -308,11 +246,6 @@ export default {
       const t = bearer(req);
       if (!t || !env.MCP_TOKEN || !safeEqual(t, env.MCP_TOKEN)) return unauthorized();
       return json(await env.PHONE.get(env.PHONE.idFromName("phone")).fcmSelfTest(url.searchParams.get("token") ?? "fake-token-for-selftest"));
-    }
-    if (url.pathname === "/phone/connect") {
-      const t = bearer(req);
-      if (!t || !env.DEVICE_TOKEN_HASH || !safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase())) return unauthorized();
-      return env.PHONE.get(env.PHONE.idFromName("phone")).fetch(req);
     }
     if (url.pathname === "/mcp") {
       const t = bearer(req);

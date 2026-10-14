@@ -1,13 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+  <!-- Data-only pushes never show notifications; drop the permission Firebase merges in. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" tools:node="remove"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
-  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
   <uses-permission android:name="android.permission.health.READ_STEPS"/>
   <uses-permission android:name="android.permission.health.READ_HEART_RATE"/>
   <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE"/>
@@ -29,14 +26,8 @@
     <activity-alias android:name="ViewPermissionUsageActivity" android:exported="true" android:targetActivity=".MainActivity" android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
       <intent-filter><action android:name="android.intent.action.VIEW_PERMISSION_USAGE"/><category android:name="android.intent.category.HEALTH_PERMISSIONS"/></intent-filter>
     </activity-alias>
-    <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="specialUse|dataSync">
-      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Holds a persistent connection so the user's own AI assistant can read their Health Connect data on demand (live pull, no cloud storage)."/>
-    </service>
     <service android:name=".PushService" android:exported="false">
       <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
     </service>
-    <receiver android:name=".BootReceiver" android:exported="false">
-      <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
-    </receiver>
   </application>
 </manifest>

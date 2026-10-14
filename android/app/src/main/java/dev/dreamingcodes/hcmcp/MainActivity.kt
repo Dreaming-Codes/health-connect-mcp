@@ -1,6 +1,5 @@
 package dev.dreamingcodes.hcmcp
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
@@ -136,12 +135,10 @@ fun BridgeScreen() {
   LaunchedEffect(status.lastRequestAt) { status.lastRequestAt?.let { lastReq = it to (status.lastRequestMethod ?: "") } }
 
   val permLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { scope.launch { refresh() } }
-  val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
   val batteryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { batteryExempt = isIgnoringBattery(ctx) }
 
   val configured = savedUrl.isNotBlank() && savedToken.isNotBlank()
   val dirty = url.trim().trimEnd('/') != savedUrl || token.trim() != savedToken
-  val running = status.phase in setOf(Phase.CONNECTING, Phase.CONNECTED, Phase.OFFLINE)
 
   fun goToSetup(msg: String) {
     setupError = msg
@@ -217,7 +214,7 @@ fun BridgeScreen() {
               if (txt.isNullOrBlank()) scope.launch { snackbar.showSnackbar("Clipboard is empty") } else { token = txt; setupError = null }
             }) { Icon(Icons.Filled.ContentPaste, null); Spacer(Modifier.width(6.dp)); Text("Paste token") }
             Spacer(Modifier.weight(1f))
-            Button(onClick = { if (save()) scope.launch { snackbar.showSnackbar(if (running) "Saved. Restart the bridge to apply." else "Saved") } }, enabled = dirty || !configured) { Text("Save") }
+            Button(onClick = { if (save()) scope.launch { snackbar.showSnackbar("Saved. Tap Register device to apply.") } }, enabled = dirty || !configured) { Text("Save") }
           }
           Text(if (configured && !dirty) "Saved, stored encrypted on this device." else "Not saved yet.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -262,27 +259,6 @@ fun BridgeScreen() {
         }
       }
 
-      // ---------- Advanced: always-on connection ----------
-      ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-              Text("Always-on connection", style = MaterialTheme.typography.titleMedium)
-              Text("Faster answers, but keeps a connection and a notification running and uses more battery. Push works without it.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.width(12.dp))
-            Switch(checked = running, onCheckedChange = { on ->
-              if (!on) { Settings.setEnabled(ctx, false); BridgeService.stop(ctx); return@Switch }
-              if (!configured || dirty) { if (!configured && (url.isBlank() || token.isBlank())) { goToSetup("Set up the Worker URL and device token first"); return@Switch }; if (!save()) return@Switch }
-              if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-              Settings.setEnabled(ctx, true)
-              BridgeService.start(ctx)?.let { scope.launch { snackbar.showSnackbar(it) } }
-            })
-          }
-        }
-      }
-
       Text("Only method names and times are shown here. Health values are never logged or stored by the bridge.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -295,15 +271,10 @@ private fun Modifier.onPlacedY(f: (Int) -> Unit) = this.onGloballyPositioned { c
 
 @Composable
 private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long, String>?) {
-  val live = s.phase in setOf(Phase.CONNECTING, Phase.CONNECTED, Phase.OFFLINE, Phase.REJECTED)
   val (label, color, icon) = when {
-    !configured && !live -> Triple("Not configured", MaterialTheme.colorScheme.outline, Icons.Outlined.SettingsSuggest)
-    s.phase == Phase.CONNECTED -> Triple("Connected (always-on)", Color(0xFF2E7D32), Icons.Filled.CheckCircle)
-    s.phase == Phase.CONNECTING -> Triple("Connecting…", Color(0xFFF9A825), Icons.Filled.Sync)
-    s.phase == Phase.OFFLINE -> Triple("Offline", MaterialTheme.colorScheme.error, Icons.Filled.CloudOff)
-    s.phase == Phase.REJECTED -> Triple("Token rejected", MaterialTheme.colorScheme.error, Icons.Filled.ErrorOutline)
+    !configured -> Triple("Not configured", MaterialTheme.colorScheme.outline, Icons.Outlined.SettingsSuggest)
     s.pushError != null -> Triple("Registration failed", MaterialTheme.colorScheme.error, Icons.Filled.ErrorOutline)
-    s.pushRegisteredAt != null -> Triple("Ready (push)", Color(0xFF2E7D32), Icons.Filled.CheckCircle)
+    s.pushRegisteredAt != null -> Triple("Ready", Color(0xFF2E7D32), Icons.Filled.CheckCircle)
     else -> Triple("Not registered", MaterialTheme.colorScheme.outline, Icons.Filled.PauseCircle)
   }
   val c by animateColorAsState(color, label = "status")
@@ -314,19 +285,13 @@ private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long,
         Text(label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
       }
       val sub = when {
-        !configured && !live -> "Enter your Worker URL and device token below."
-        s.phase == Phase.CONNECTED -> "Answering over a live connection." + (s.connectedSince?.let { " Since ${fmt(it)}." } ?: "")
-        s.phase == Phase.OFFLINE -> "Retrying${s.retryInSec?.let { " in ${it}s" } ?: ""}. Push still works."
-        s.phase == Phase.CONNECTING -> "Opening a secure connection to the Worker."
-        s.phase == Phase.REJECTED -> "Fix the device token and try again."
+        !configured -> "Enter your Worker URL and device token below."
         s.pushError != null -> "Tap Re-register to try again."
-        s.pushRegisteredAt != null -> "Your assistant wakes this phone on demand. No background connection. Registered ${ago(s.pushRegisteredAt)}."
+        s.pushRegisteredAt != null -> "Your assistant wakes this phone with a push message when it needs data. Nothing runs in the background. Registered ${ago(s.pushRegisteredAt)}."
         else -> "Tap Register device to finish setup."
       }
-      if (s.pushError != null && !live) Text("Last error: ${s.pushError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+      if (s.pushError != null) Text("Last error: ${s.pushError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
       Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      if (s.lastError != null && live && s.phase != Phase.CONNECTED)
-        Text("Last error: ${s.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
       HorizontalDivider(Modifier.padding(vertical = 4.dp))
       Text(lastReq?.let { "Last request: ${it.second} · ${ago(it.first)}" } ?: "Last request: none yet",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

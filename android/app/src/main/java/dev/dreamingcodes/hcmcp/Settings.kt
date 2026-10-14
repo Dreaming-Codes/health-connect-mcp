@@ -21,10 +21,8 @@ object Settings {
   fun workerUrl(ctx: Context) = prefs(ctx).getString("worker_url", "") ?: ""
   fun deviceToken(ctx: Context) = prefs(ctx).getString("device_token", "") ?: ""
   fun isConfigured(ctx: Context) = workerUrl(ctx).isNotBlank() && deviceToken(ctx).isNotBlank()
-  fun enabled(ctx: Context) = plain(ctx).getBoolean("enabled", false)
   fun save(ctx: Context, url: String, token: String) =
     prefs(ctx).edit().putString("worker_url", url.trim().trimEnd('/')).putString("device_token", token.trim()).commit()
-  fun setEnabled(ctx: Context, on: Boolean) = plain(ctx).edit().putBoolean("enabled", on).apply()
   fun setPush(ctx: Context, at: Long?, err: String?) = plain(ctx).edit().putLong("push_at", at ?: 0L).putString("push_err", err).apply()
   fun pushRegisteredAt(ctx: Context): Long? = plain(ctx).getLong("push_at", 0L).takeIf { it > 0 }
   fun pushError(ctx: Context): String? = plain(ctx).getString("push_err", null)
