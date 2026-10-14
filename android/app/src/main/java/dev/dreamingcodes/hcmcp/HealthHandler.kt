@@ -6,6 +6,7 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.*
 import androidx.health.connect.client.request.AggregateGroupByDurationRequest
@@ -30,6 +31,12 @@ class HealthHandler(private val ctx: Context) {
       ExerciseSessionRecord::class, DistanceRecord::class, ActiveCaloriesBurnedRecord::class,
       TotalCaloriesBurnedRecord::class, WeightRecord::class, NutritionRecord::class, HydrationRecord::class,
     ).map { HealthPermission.getReadPermission(it) }.toSet()
+
+    const val BACKGROUND_PERM = HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+    fun backgroundAvailable(c: HealthConnectClient) =
+      c.features.getFeatureStatus(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+    fun requestedPermissions(background: Boolean): Set<String> =
+      READ_PERMS + (if (background) setOf(BACKGROUND_PERM) else emptySet()) + TestData.writePermissions()
 
     val TYPES: Map<String, KClass<out Record>> = mapOf(
       "Steps" to StepsRecord::class, "HeartRate" to HeartRateRecord::class, "RestingHeartRate" to RestingHeartRateRecord::class,

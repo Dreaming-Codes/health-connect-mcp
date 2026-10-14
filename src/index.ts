@@ -125,10 +125,40 @@ export class PhoneHub extends DurableObject<Env> {
   }
 }
 
-const iso = z.string().refine((s) => !Number.isNaN(Date.parse(s)), "must be an ISO-8601 date-time");
+const HAS_OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i;
+const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
+
+/** Offset (ms) of `tz` at instant `ms`: local wall time minus UTC. */
+function tzOffsetMs(ms: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms));
+  const g = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  return Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute"), g("second")) - Math.floor(ms / 1000) * 1000;
+}
+const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
+
+/**
+ * Accepts ISO with offset/Z (returned unchanged), a plain date (YYYY-MM-DD = local midnight) or a local
+ * date-time without offset, interpreted in `tz`. Returns ISO-8601 with an explicit offset.
+ */
+export function normalizeTime(s: string, tz: string): string {
+  s = s.trim();
+  if (HAS_OFFSET.test(s)) { if (Number.isNaN(Date.parse(s))) throw new Error(`invalid date-time: ${s}`); return s; }
+  const m = LOCAL_RE.exec(s);
+  if (!m) throw new Error(`invalid date-time: ${s} (use YYYY-MM-DD, YYYY-MM-DDTHH:mm[:ss] or ISO-8601 with offset)`);
+  const [y, mo, d, h = "0", mi = "0", se = "0", ms = "0"] = m.slice(1).map((v) => v ?? undefined) as string[];
+  const wall = Date.UTC(+y, +mo - 1, +d, +h, +mi, +se, +ms.padEnd(3, "0"));
+  let off = tzOffsetMs(wall, tz);
+  off = tzOffsetMs(wall - off, tz); // second pass handles DST boundaries
+  const oMin = Math.round(off / 60000);
+  const sign = oMin < 0 ? "-" : "+";
+  return `${y}-${mo}-${d}T${pad(+h)}:${pad(+mi)}:${pad(+se)}${ms !== "0" ? "." + ms.padEnd(3, "0") : ""}${sign}${pad(Math.trunc(Math.abs(oMin) / 60))}:${pad(Math.abs(oMin) % 60)}`;
+}
+function validTz(tz: string) { try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; } }
+
+const iso = z.string().refine((s) => HAS_OFFSET.test(s.trim()) ? !Number.isNaN(Date.parse(s)) : LOCAL_RE.test(s.trim()), "must be YYYY-MM-DD, a local date-time (YYYY-MM-DDTHH:mm[:ss], read in `timezone`) or ISO-8601 with offset");
 const range = {
-  start: iso.describe("Inclusive start, ISO-8601 (e.g. 2026-10-12T00:00:00+02:00)"),
-  end: iso.describe("Exclusive end, ISO-8601"),
+  start: iso.describe("Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00"),
+  end: iso.describe("Exclusive end, same formats as start (a plain date means local midnight starting that day)"),
   timezone: z.string().default(DEFAULT_TZ).describe(`IANA timezone used for day buckets (default ${DEFAULT_TZ})`),
 };
 const bucket = z.enum(["none", "hour", "day"]).default("day").describe("Aggregation bucket");
@@ -142,8 +172,14 @@ export const RECORD_TYPES = [
 function buildServer(env: Env): McpServer {
   const hub = env.PHONE.get(env.PHONE.idFromName("phone"));
   const server = new McpServer({ name: "health-connect", version: "0.1.0" });
-  const forward = async (method: string, params: unknown) => {
+  const forward = async (method: string, params: any) => {
     try {
+      if (params && typeof params.start === "string") {
+        const tz = params.timezone ?? DEFAULT_TZ;
+        if (!validTz(tz)) throw new Error(`invalid timezone: ${tz}`);
+        params = { ...params, timezone: tz, start: normalizeTime(params.start, tz), end: normalizeTime(params.end, tz) };
+        if (Date.parse(params.end) <= Date.parse(params.start)) throw new Error("end must be after start");
+      }
       const result = await hub.call(method, params);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     } catch (e: any) {

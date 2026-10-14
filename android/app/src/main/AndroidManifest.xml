@@ -4,6 +4,8 @@
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
   <uses-permission android:name="android.permission.health.READ_STEPS"/>
@@ -19,15 +21,17 @@
   <uses-permission android:name="android.permission.health.READ_HYDRATION"/>
   <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"/>
   <queries><package android:name="com.google.android.apps.healthdata"/></queries>
-  <application android:label="HC Bridge" android:icon="@android:drawable/ic_menu_compass" android:theme="@style/Theme.AppCompat.Light.DarkActionBar" android:allowBackup="false">
-    <activity android:name=".MainActivity" android:exported="true">
+  <application android:label="HC Bridge" android:icon="@android:drawable/ic_menu_compass" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+    <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
       <intent-filter><action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/></intent-filter>
     </activity>
     <activity-alias android:name="ViewPermissionUsageActivity" android:exported="true" android:targetActivity=".MainActivity" android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
       <intent-filter><action android:name="android.intent.action.VIEW_PERMISSION_USAGE"/><category android:name="android.intent.category.HEALTH_PERMISSIONS"/></intent-filter>
     </activity-alias>
-    <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="dataSync"/>
+    <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="specialUse|dataSync">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Holds a persistent connection so the user's own AI assistant can read their Health Connect data on demand (live pull, no cloud storage)."/>
+    </service>
     <receiver android:name=".BootReceiver" android:exported="false">
       <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
     </receiver>

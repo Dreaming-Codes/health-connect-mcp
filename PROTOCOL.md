@@ -23,7 +23,7 @@ Live pull only: the Worker stores **no health data**. The Durable Object `PhoneH
 Frames with a `type` field from the Worker (e.g. `pong`) are not requests.
 
 ### Common params
-`start`, `end`: ISO-8601 with offset (`2026-10-12T00:00:00+02:00`) or `Z`. Half-open `[start, end)`.
+`start`, `end`: always sent to the phone as ISO-8601 with an explicit offset (`2026-10-12T00:00:00+02:00`) or `Z`. The Worker accepts plain dates (`2026-10-12`) and local date-times without offset (`2026-10-12T08:00`) from MCP clients and normalizes them using `timezone`. Half-open `[start, end)`.
 `timezone`: IANA zone, default `Europe/Amsterdam`; used for day buckets and for formatting output times.
 
 ### Methods and result shapes

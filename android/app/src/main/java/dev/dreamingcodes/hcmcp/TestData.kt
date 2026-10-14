@@ -13,6 +13,10 @@ object TestData {
   private fun t(d: String, hm: String) = LocalDateTime.parse("${d}T$hm").atZone(tz)
   private fun md(id: String) = Metadata.manualEntry(clientRecordId = "hcbridge-test-$id", clientRecordVersion = 1)
 
+  fun writePermissions(): Set<String> = if (!BuildConfig.DEBUG) emptySet() else setOf(StepsRecord::class, HeartRateRecord::class,
+    SleepSessionRecord::class, ExerciseSessionRecord::class, WeightRecord::class, NutritionRecord::class)
+    .map { androidx.health.connect.client.permission.HealthPermission.getWritePermission(it) }.toSet()
+
   suspend fun insert(c: HealthConnectClient) {
     val recs = mutableListOf<Record>()
     listOf("2026-10-10" to 6000L, "2026-10-11" to 9500L, "2026-10-12" to 12000L).forEach { (d, n) ->
