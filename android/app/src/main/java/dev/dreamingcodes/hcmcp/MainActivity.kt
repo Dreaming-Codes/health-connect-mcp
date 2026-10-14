@@ -122,6 +122,8 @@ fun BridgeScreen() {
       val u = Settings.workerUrl(ctx); val t = Settings.deviceToken(ctx)
       savedUrl = u; savedToken = t
       if (!loaded) { url = u.ifBlank { Settings.DEFAULT_URL }; token = t; loaded = true }
+      val pa = Settings.pushRegisteredAt(ctx); val pe = Settings.pushError(ctx)
+      BridgeState.set { it.copy(pushRegisteredAt = it.pushRegisteredAt ?: pa, pushError = it.pushError ?: pe) }
     }
     refresh()
   }
@@ -165,20 +167,23 @@ fun BridgeScreen() {
       // ---------- Status ----------
       key(tick) { StatusCard(status, configured, lastReq) }
 
-      // ---------- Primary action ----------
+      // ---------- Primary action: push registration ----------
       Button(
         onClick = {
-          if (running) { Settings.setEnabled(ctx, false); BridgeService.stop(ctx); return@Button }
           if (!configured || dirty) { if (!configured && (url.isBlank() || token.isBlank())) { goToSetup("Set up the Worker URL and device token first"); return@Button }; if (!save()) return@Button }
-          if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-          Settings.setEnabled(ctx, true)
-          BridgeService.start(ctx)?.let { scope.launch { snackbar.showSnackbar(it) } }
+          BridgeState.set { it.copy(registering = true) }
+          scope.launch {
+            val err = withContext(Dispatchers.IO) { WorkerApi.register(ctx) }
+            BridgeState.set { it.copy(registering = false) }
+            snackbar.showSnackbar(err?.let { "Registration failed: $it" } ?: "Registered. Your assistant can now wake this phone.")
+          }
         },
+        enabled = !status.registering,
         modifier = Modifier.fillMaxWidth().height(56.dp),
-        colors = if (running) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) else ButtonDefaults.buttonColors(),
       ) {
-        Icon(if (running) Icons.Filled.Stop else Icons.Filled.PlayArrow, null); Spacer(Modifier.width(8.dp))
-        Text(if (running) "Stop bridge" else "Start bridge", style = MaterialTheme.typography.titleMedium)
+        if (status.registering) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.NotificationsActive, null)
+        Spacer(Modifier.width(8.dp))
+        Text(if (status.pushRegisteredAt != null) "Re-register device" else "Register device", style = MaterialTheme.typography.titleMedium)
       }
 
       // ---------- Setup ----------
@@ -257,6 +262,27 @@ fun BridgeScreen() {
         }
       }
 
+      // ---------- Advanced: always-on connection ----------
+      ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+              Text("Always-on connection", style = MaterialTheme.typography.titleMedium)
+              Text("Faster answers, but keeps a connection and a notification running and uses more battery. Push works without it.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = running, onCheckedChange = { on ->
+              if (!on) { Settings.setEnabled(ctx, false); BridgeService.stop(ctx); return@Switch }
+              if (!configured || dirty) { if (!configured && (url.isBlank() || token.isBlank())) { goToSetup("Set up the Worker URL and device token first"); return@Switch }; if (!save()) return@Switch }
+              if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+              Settings.setEnabled(ctx, true)
+              BridgeService.start(ctx)?.let { scope.launch { snackbar.showSnackbar(it) } }
+            })
+          }
+        }
+      }
+
       Text("Only method names and times are shown here. Health values are never logged or stored by the bridge.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -269,13 +295,16 @@ private fun Modifier.onPlacedY(f: (Int) -> Unit) = this.onGloballyPositioned { c
 
 @Composable
 private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long, String>?) {
+  val live = s.phase in setOf(Phase.CONNECTING, Phase.CONNECTED, Phase.OFFLINE, Phase.REJECTED)
   val (label, color, icon) = when {
-    !configured && s.phase == Phase.STOPPED -> Triple("Not configured", MaterialTheme.colorScheme.outline, Icons.Outlined.SettingsSuggest)
-    s.phase == Phase.CONNECTED -> Triple("Connected", Color(0xFF2E7D32), Icons.Filled.CheckCircle)
+    !configured && !live -> Triple("Not configured", MaterialTheme.colorScheme.outline, Icons.Outlined.SettingsSuggest)
+    s.phase == Phase.CONNECTED -> Triple("Connected (always-on)", Color(0xFF2E7D32), Icons.Filled.CheckCircle)
     s.phase == Phase.CONNECTING -> Triple("Connecting…", Color(0xFFF9A825), Icons.Filled.Sync)
     s.phase == Phase.OFFLINE -> Triple("Offline", MaterialTheme.colorScheme.error, Icons.Filled.CloudOff)
     s.phase == Phase.REJECTED -> Triple("Token rejected", MaterialTheme.colorScheme.error, Icons.Filled.ErrorOutline)
-    else -> Triple("Stopped", MaterialTheme.colorScheme.outline, Icons.Filled.PauseCircle)
+    s.pushError != null -> Triple("Registration failed", MaterialTheme.colorScheme.error, Icons.Filled.ErrorOutline)
+    s.pushRegisteredAt != null -> Triple("Ready (push)", Color(0xFF2E7D32), Icons.Filled.CheckCircle)
+    else -> Triple("Not registered", MaterialTheme.colorScheme.outline, Icons.Filled.PauseCircle)
   }
   val c by animateColorAsState(color, label = "status")
   OutlinedCard(Modifier.fillMaxWidth(), border = BorderStroke(2.dp, c)) {
@@ -285,15 +314,18 @@ private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long,
         Text(label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
       }
       val sub = when {
-        !configured && s.phase == Phase.STOPPED -> "Enter your Worker URL and device token below."
-        s.phase == Phase.CONNECTED -> "Your assistant can query Health Connect live." + (s.connectedSince?.let { " Since ${fmt(it)}." } ?: "")
-        s.phase == Phase.OFFLINE -> "Retrying${s.retryInSec?.let { " in ${it}s" } ?: ""}."
+        !configured && !live -> "Enter your Worker URL and device token below."
+        s.phase == Phase.CONNECTED -> "Answering over a live connection." + (s.connectedSince?.let { " Since ${fmt(it)}." } ?: "")
+        s.phase == Phase.OFFLINE -> "Retrying${s.retryInSec?.let { " in ${it}s" } ?: ""}. Push still works."
         s.phase == Phase.CONNECTING -> "Opening a secure connection to the Worker."
-        s.phase == Phase.REJECTED -> "Fix the device token and start again."
-        else -> "Tap Start bridge to go online."
+        s.phase == Phase.REJECTED -> "Fix the device token and try again."
+        s.pushError != null -> "Tap Re-register to try again."
+        s.pushRegisteredAt != null -> "Your assistant wakes this phone on demand. No background connection. Registered ${ago(s.pushRegisteredAt)}."
+        else -> "Tap Register device to finish setup."
       }
+      if (s.pushError != null && !live) Text("Last error: ${s.pushError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
       Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      if (s.lastError != null && s.phase != Phase.CONNECTED)
+      if (s.lastError != null && live && s.phase != Phase.CONNECTED)
         Text("Last error: ${s.lastError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
       HorizontalDivider(Modifier.padding(vertical = 4.dp))
       Text(lastReq?.let { "Last request: ${it.second} · ${ago(it.first)}" } ?: "Last request: none yet",

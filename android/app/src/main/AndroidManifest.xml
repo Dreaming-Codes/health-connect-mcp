@@ -32,6 +32,9 @@
     <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="specialUse|dataSync">
       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Holds a persistent connection so the user's own AI assistant can read their Health Connect data on demand (live pull, no cloud storage)."/>
     </service>
+    <service android:name=".PushService" android:exported="false">
+      <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
+    </service>
     <receiver android:name=".BootReceiver" android:exported="false">
       <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
     </receiver>

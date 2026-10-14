@@ -25,6 +25,9 @@ object Settings {
   fun save(ctx: Context, url: String, token: String) =
     prefs(ctx).edit().putString("worker_url", url.trim().trimEnd('/')).putString("device_token", token.trim()).commit()
   fun setEnabled(ctx: Context, on: Boolean) = plain(ctx).edit().putBoolean("enabled", on).apply()
+  fun setPush(ctx: Context, at: Long?, err: String?) = plain(ctx).edit().putLong("push_at", at ?: 0L).putString("push_err", err).apply()
+  fun pushRegisteredAt(ctx: Context): Long? = plain(ctx).getLong("push_at", 0L).takeIf { it > 0 }
+  fun pushError(ctx: Context): String? = plain(ctx).getString("push_err", null)
   fun setLastRequest(ctx: Context, at: Long, method: String) = plain(ctx).edit().putLong("last_req_at", at).putString("last_req_method", method).apply()
   fun lastRequest(ctx: Context): Pair<Long, String>? = plain(ctx).getLong("last_req_at", 0L).takeIf { it > 0 }?.let { it to (plain(ctx).getString("last_req_method", "") ?: "") }
 }

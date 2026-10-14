@@ -39,3 +39,21 @@ Frames with a `type` field from the Worker (e.g. `pong`) are not requests.
 | `get_phone_status` | – | `{app_version, device, android_sdk, battery, health_connect, granted[], missing[]}` |
 
 Values Health Connect lacks are `null`. The phone app must never log values, only method names.
+
+## Push mode (default since app 0.3.0)
+No persistent connection. When no WebSocket is live, the Worker wakes the phone with FCM.
+
+1. **Register**: `POST /phone/register` with `Authorization: Bearer <DEVICE_TOKEN>`,
+   body `{"fcm_token":"…","app_version":"0.3.0","device":"Google Pixel","mode":"push"}` → `{"ok":true,"push_configured":true}`.
+   The app re-sends this on FCM token refresh (`onNewToken`) and when the user taps Register.
+2. **Request**: the DO creates a request id and sends a high-priority FCM **data** message (TTL 20 s) containing only
+   `id`, `method`, `params` (JSON string). It never contains health data.
+3. **Answer**: the phone runs the query (≤15 s inside `onMessageReceived`) and calls `POST /phone/result/<id>` with the
+   device token, body `{"result":{…}}` or `{"error":{"code","message"}}` (same shapes as above). Responses: `200 {"ok":true}`,
+   `410` when the id is unknown or expired.
+4. The Worker waits up to 20 s (`PUSH_TIMEOUT_MS`). If FCM says the token is `UNREGISTERED` the stored token is dropped.
+
+Routing: a live WebSocket (the "Always-on connection" toggle in the app) is preferred, and push is the fallback.
+`get_phone_status` reports `mode` (`websocket`/`push`/`none`), `push_registered_at`, `last_push.latency_ms`.
+Background reads require Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
+Worker secret `FCM_SERVICE_ACCOUNT` holds the Firebase service-account JSON. OAuth tokens are cached in DO storage.

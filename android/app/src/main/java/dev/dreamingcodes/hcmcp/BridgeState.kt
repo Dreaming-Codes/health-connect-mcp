@@ -13,6 +13,9 @@ data class BridgeStatus(
   val lastRequestAt: Long? = null,
   val lastRequestMethod: String? = null,
   val connectedSince: Long? = null,
+  val pushRegisteredAt: Long? = null,
+  val pushError: String? = null,
+  val registering: Boolean = false,
 )
 
 /** Process-wide bridge status for the UI. Holds method names and timestamps only, never health values. */

@@ -12,3 +12,5 @@ android/build
 android/app/build
 android/local.properties
 android/.kotlin
+.firebase-sa.json
+android/app/google-services.json

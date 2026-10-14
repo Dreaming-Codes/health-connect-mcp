@@ -2,15 +2,19 @@ import { DurableObject } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import { FcmError, mintAccessToken, sendData, type ServiceAccount } from "./fcm";
 
 export interface Env {
   PHONE: DurableObjectNamespace<PhoneHub>;
   DEVICE_TOKEN_HASH: string; // hex sha256 of the device token
   MCP_TOKEN: string;
   PHONE_TIMEOUT_MS?: string;
+  PUSH_TIMEOUT_MS?: string;
+  FCM_SERVICE_ACCOUNT?: string; // service-account JSON
 }
 
 const DEFAULT_TZ = "Europe/Amsterdam";
+const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
 
 async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -35,7 +39,8 @@ export class PhoneError extends Error {}
 
 /** One instance ("phone") per user. Holds the phone's hibernatable WebSocket. */
 export class PhoneHub extends DurableObject<Env> {
-  private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; via: "ws" | "push"; sentAt: number }>();
+  private oauth?: { token: string; expiresAt: number };
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -65,12 +70,54 @@ export class PhoneHub extends DurableObject<Env> {
       return;
     }
     if (typeof data?.id !== "string") return;
-    const p = this.pending.get(data.id);
-    if (!p) return;
-    this.pending.delete(data.id);
+    await this.settle(data.id, data);
+  }
+
+  /** Resolve a pending request from either transport. Returns false if unknown/expired. */
+  async settle(id: string, data: any): Promise<boolean> {
+    const p = this.pending.get(id);
+    if (!p) return false;
+    this.pending.delete(id);
     clearTimeout(p.timer);
-    if (data.error) p.reject(new PhoneError(`phone error ${data.error.code ?? ""}: ${data.error.message ?? "unknown"}`.trim()));
-    else p.resolve(data.result);
+    const latency = Date.now() - p.sentAt;
+    await this.ctx.storage.put("lastSeen", Date.now());
+    if (p.via === "push") await this.ctx.storage.put("lastPush", { latency_ms: latency, at: Date.now() });
+    if (data?.error) p.reject(new PhoneError(`phone error ${data.error.code ?? ""}: ${data.error.message ?? "unknown"}`.trim()));
+    else p.resolve(data?.result);
+    return true;
+  }
+
+  /** Phone registers/refreshes its FCM token (authenticated by the Worker). */
+  async register(info: { fcm_token: string; app_version?: string; device?: string; mode?: string }): Promise<void> {
+    await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now() });
+    await this.ctx.storage.put("device", { app_version: info.app_version, device: info.device, mode: info.mode, ts: Date.now() });
+    await this.ctx.storage.put("lastSeen", Date.now());
+  }
+
+  private async accessToken(sa: ServiceAccount): Promise<string> {
+    if (this.oauth && this.oauth.expiresAt - Date.now() > 120_000) return this.oauth.token;
+    const stored = await this.ctx.storage.get<{ token: string; expiresAt: number }>("oauth");
+    if (stored && stored.expiresAt - Date.now() > 120_000) return (this.oauth = stored).token;
+    this.oauth = await mintAccessToken(sa);
+    await this.ctx.storage.put("oauth", this.oauth);
+    return this.oauth.token;
+  }
+
+  /** Diagnostic: mint an OAuth token and send to an arbitrary FCM token (used by tests with a fake token). */
+  async fcmSelfTest(fakeToken: string): Promise<Record<string, unknown>> {
+    const sa = this.serviceAccount();
+    if (!sa) return { ok: false, error: "FCM_SERVICE_ACCOUNT not configured" };
+    const out: Record<string, unknown> = {};
+    try { const t = await this.accessToken(sa); out.oauth = `ok (${t.length} chars, expires ${new Date(this.oauth!.expiresAt).toISOString()})`; }
+    catch (e: any) { return { ok: false, oauth: String(e.message) }; }
+    try { out.send = await sendData(sa, this.oauth!.token, fakeToken, { type: "selftest" }, 10); }
+    catch (e: any) { out.send_error = String(e.message); out.code = e.code; }
+    return out;
+  }
+
+  private serviceAccount(): ServiceAccount | undefined {
+    if (!this.env.FCM_SERVICE_ACCOUNT) return undefined;
+    try { return JSON.parse(this.env.FCM_SERVICE_ACCOUNT); } catch { return undefined; }
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
@@ -96,8 +143,14 @@ export class PhoneHub extends DurableObject<Env> {
 
   async status(): Promise<Record<string, unknown>> {
     const ls = await this.lastSeenMs();
+    const fcm = await this.ctx.storage.get<{ token: string; registered_at: number }>("fcm");
+    const live = !!this.liveSocket();
     return {
-      online: !!this.liveSocket(),
+      mode: live ? "websocket" : fcm ? "push" : "none",
+      online: live,
+      push_registered: !!fcm,
+      push_registered_at: fcm ? new Date(fcm.registered_at).toISOString() : null,
+      last_push: ((p) => (p ? { latency_ms: p.latency_ms, at: new Date(p.at).toISOString() } : null))(await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush")),
       last_seen: ls ? new Date(ls).toISOString() : null,
       connected_at: ((c) => (c ? new Date(c).toISOString() : null))(await this.ctx.storage.get<number>("connectedAt")),
       device: (await this.ctx.storage.get("device")) ?? null,
@@ -107,21 +160,43 @@ export class PhoneHub extends DurableObject<Env> {
   /** Forward a request to the phone and await its answer. */
   async call(method: string, params: unknown): Promise<unknown> {
     const ws = this.liveSocket();
-    if (!ws) {
-      const ls = await this.lastSeenMs();
-      throw new PhoneError(`phone offline (last seen ${ls ? new Date(ls).toISOString() : "never"})`);
-    }
     const id = crypto.randomUUID();
-    const timeoutMs = Number(this.env.PHONE_TIMEOUT_MS ?? 10000);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+    const lastSeen = async () => { const ls = await this.lastSeenMs(); return ls ? new Date(ls).toISOString() : "never"; };
+    if (ws) {
+      const timeoutMs = Number(this.env.PHONE_TIMEOUT_MS ?? 10000);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { this.pending.delete(id); reject(new PhoneError(`phone did not answer within ${timeoutMs / 1000}s (method ${method})`)); }, timeoutMs);
+        this.pending.set(id, { resolve, reject, timer, via: "ws", sentAt: Date.now() });
+        try { ws.send(JSON.stringify({ id, method, params })); }
+        catch (e) { clearTimeout(timer); this.pending.delete(id); reject(new PhoneError(`send to phone failed: ${e}`)); }
+      });
+    }
+    // Push path: wake the phone via FCM; it POSTs the answer to /phone/result/<id>.
+    const fcm = await this.ctx.storage.get<{ token: string }>("fcm");
+    const sa = this.serviceAccount();
+    if (!fcm || !sa) throw new PhoneError(`phone offline (last seen ${await lastSeen()}; ${!fcm ? "no push registration" : "push not configured on server"})`);
+    const timeoutMs = Number(this.env.PUSH_TIMEOUT_MS ?? 20000);
+    const result = new Promise((resolve, reject) => {
+      const timer = setTimeout(async () => {
         this.pending.delete(id);
-        reject(new PhoneError(`phone did not answer within ${timeoutMs / 1000}s (method ${method})`));
+        reject(new PhoneError(`phone did not answer push within ${timeoutMs / 1000}s (method ${method}; last seen ${await lastSeen()})`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      try { ws.send(JSON.stringify({ id, method, params })); }
-      catch (e) { clearTimeout(timer); this.pending.delete(id); reject(new PhoneError(`send to phone failed: ${e}`)); }
+      this.pending.set(id, { resolve, reject, timer, via: "push", sentAt: Date.now() });
     });
+    try {
+      // Data only: request id, method, params. Never health data.
+      await sendData(sa, await this.accessToken(sa), fcm.token, { id, method, params: JSON.stringify(params ?? {}) }, Math.ceil(timeoutMs / 1000));
+    } catch (e: any) {
+      const p = this.pending.get(id);
+      if (p) { clearTimeout(p.timer); this.pending.delete(id); }
+      if (e instanceof FcmError && (e.code === "UNREGISTERED" || e.status === 404)) {
+        await this.ctx.storage.delete("fcm");
+        throw new PhoneError("push token is no longer valid (app uninstalled or data cleared); open the app to re-register");
+      }
+      if (e instanceof FcmError && e.status === 401) { this.oauth = undefined; await this.ctx.storage.delete("oauth"); }
+      throw new PhoneError(`push send failed: ${e.message ?? e}`);
+    }
+    return result;
   }
 }
 
@@ -202,7 +277,7 @@ function buildServer(env: Env): McpServer {
   });
   server.registerTool("get_phone_status", { description: "Whether the phone is connected, last-seen time, app/permission info.", inputSchema: {} }, async () => {
     const s: Record<string, unknown> = await hub.status();
-    if (s.online) {
+    if (s.online || s.push_registered) {
       try { s.phone = await hub.call("get_phone_status", {}); } catch (e: any) { s.phone_error = String(e?.message ?? e); }
     }
     return { content: [{ type: "text" as const, text: JSON.stringify(s, null, 2) }] };
@@ -213,6 +288,27 @@ function buildServer(env: Env): McpServer {
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname === "/phone/register" || url.pathname.startsWith("/phone/result/")) {
+      if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+      const t = bearer(req);
+      if (!t || !env.DEVICE_TOKEN_HASH || !safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase())) return unauthorized();
+      const body: any = await req.json().catch(() => null);
+      if (!body || typeof body !== "object") return json({ error: "invalid json" }, 400);
+      const hub = env.PHONE.get(env.PHONE.idFromName("phone"));
+      if (url.pathname === "/phone/register") {
+        if (typeof body.fcm_token !== "string" || body.fcm_token.length < 20) return json({ error: "fcm_token required" }, 400);
+        await hub.register({ fcm_token: body.fcm_token, app_version: body.app_version, device: body.device, mode: body.mode });
+        return json({ ok: true, push_configured: !!env.FCM_SERVICE_ACCOUNT });
+      }
+      const id = decodeURIComponent(url.pathname.slice("/phone/result/".length));
+      const ok = await hub.settle(id, body);
+      return ok ? json({ ok: true }) : json({ error: "unknown or expired request id" }, 410);
+    }
+    if (url.pathname === "/admin/fcm-selftest") {
+      const t = bearer(req);
+      if (!t || !env.MCP_TOKEN || !safeEqual(t, env.MCP_TOKEN)) return unauthorized();
+      return json(await env.PHONE.get(env.PHONE.idFromName("phone")).fcmSelfTest(url.searchParams.get("token") ?? "fake-token-for-selftest"));
+    }
     if (url.pathname === "/phone/connect") {
       const t = bearer(req);
       if (!t || !env.DEVICE_TOKEN_HASH || !safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase())) return unauthorized();
