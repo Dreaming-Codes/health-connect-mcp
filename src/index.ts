@@ -55,6 +55,14 @@ export class PhoneHub extends DurableObject<Env> {
     return true;
   }
 
+  /** Refresh stored device metadata from a live phone answer; returns the stored record. */
+  async updateDevice(info: { app_version?: string; device?: string }): Promise<Record<string, unknown>> {
+    const prev = (await this.ctx.storage.get<Record<string, unknown>>("device")) ?? {};
+    const next = { ...prev, ...Object.fromEntries(Object.entries(info).filter(([, v]) => typeof v === "string" && v)), ts: Date.now() };
+    await this.ctx.storage.put("device", next);
+    return next;
+  }
+
   /** Phone registers/refreshes its FCM token (authenticated by the Worker). */
   async register(info: { fcm_token: string; app_version?: string; device?: string; mode?: string }): Promise<void> {
     await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now() });
@@ -216,7 +224,12 @@ function buildServer(env: Env): McpServer {
   server.registerTool("get_phone_status", { description: "Whether the phone is connected, last-seen time, app/permission info.", inputSchema: {} }, async () => {
     const s: Record<string, unknown> = await hub.status();
     if (s.push_registered) {
-      try { s.phone = await hub.call("get_phone_status", {}); } catch (e: any) { s.phone_error = String(e?.message ?? e); }
+      try {
+        s.phone = await hub.call("get_phone_status", {});
+        // Keep stored device info in sync with what the phone reports live (registration data can be stale).
+        const ph: any = s.phone;
+        if (ph && typeof ph === "object") s.device = await hub.updateDevice({ app_version: ph.app_version, device: ph.device });
+      } catch (e: any) { s.phone_error = String(e?.message ?? e); }
     }
     return { content: [{ type: "text" as const, text: JSON.stringify(s, null, 2) }] };
   });
