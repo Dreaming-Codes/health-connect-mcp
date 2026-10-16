@@ -1,5 +1,4 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { connect } from "./client.mjs";
 const [base, mcpToken, deviceToken] = process.argv.slice(2);
 const out = [];
 const http = async (label, path, init) => { const r = await fetch(base + path, init); out.push([label, r.status, await r.text()]); };
@@ -14,8 +13,7 @@ await http("register no fcm", "/phone/register", dev("{}"));
 await http("register short fcm", "/phone/register", dev(JSON.stringify({ fcm_token: "short" })));
 await http("result unknown", "/phone/result/abc", dev(JSON.stringify({ result: 1 })));
 await http("result array", "/phone/result/abc", dev("[]"));
-const c = new Client({ name: "contract", version: "1" });
-await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${mcpToken}` } } }));
+const c = await connect(base, mcpToken);
 out.push(["tools", (await c.listTools()).tools]);
 const r = { start: "2026-10-10", end: "2026-10-13" };
 for (const [n, a] of [["get_steps", r], ["get_steps", { start: "13/10/2026", end: "2026-10-14" }], ["get_steps", { start: "2026-10-13", end: "2026-10-12" }],

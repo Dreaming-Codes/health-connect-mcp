@@ -1,8 +1,6 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { connect } from "./client.mjs";
 const [base, token, mode] = process.argv.slice(2);
-const c = new Client({ name: "e2e", version: "1" });
-await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+const c = await connect(base, token);
 const r = { start: "2026-10-10T00:00:00+02:00", end: "2026-10-13T00:00:00+02:00" };
 if (mode === "list") { console.log((await c.listTools()).tools.map((t) => t.name).join(",")); }
 const calls = mode === "status" ? [["get_phone_status", {}]] : mode === "one" ? [["get_steps", r]] : [
