@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-/** Worker URL + device token, encrypted at rest with an Android Keystore key. */
 object Settings {
   const val DEFAULT_URL = "https://health-connect-mcp.dreamingcodes.workers.dev"
   @Volatile private var cached: SharedPreferences? = null

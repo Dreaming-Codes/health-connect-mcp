@@ -1,4 +1,3 @@
-/** FCM HTTP v1 sender: RS256 JWT via WebCrypto -> OAuth access token (cached) -> messages:send. */
 export interface ServiceAccount { project_id: string; client_email: string; private_key: string; token_uri?: string }
 
 const b64url = (b: ArrayBuffer | Uint8Array | string) => {

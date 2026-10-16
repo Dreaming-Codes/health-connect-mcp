@@ -1,6 +1,5 @@
 package dev.dreamingcodes.hcmcp
 
-import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -61,14 +60,12 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    // Debug-only automation hook for emulator tests.
     if (BuildConfig.DEBUG) intent?.let { i ->
       if (i.hasExtra("worker_url")) Settings.save(this, i.getStringExtra("worker_url")!!, i.getStringExtra("device_token") ?: "")
       if (i.getBooleanExtra("seed", false)) lifecycleScope.launch { runCatching { TestData.insert(HealthConnectClient.getOrCreate(this@MainActivity)) } }
     }
     setContent { AppTheme { BridgeScreen() } }
-    // Android 15+ marks screens with password fields as sensitive and blanks them in recordings/screen share.
-    // The token field is a plain text field with our own mask, and we opt the whole UI out explicitly.
+    // Android 15+ blanks screens with password fields in recordings; the token uses MaskTransformation instead and the UI opts out.
     if (Build.VERSION.SDK_INT >= 35) markNotSensitive(window.decorView)
   }
 }
@@ -123,7 +120,7 @@ fun BridgeScreen() {
     }
     refresh()
   }
-  LaunchedEffect(Unit) { while (true) { delay(15_000); tick++ } } // keeps "x min ago" fresh
+  LaunchedEffect(Unit) { while (true) { delay(15_000); tick++ } }
   val lifecycle = LocalLifecycleOwner.current.lifecycle
   DisposableEffect(lifecycle) {
     val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) scope.launch { refresh() } }
@@ -157,10 +154,8 @@ fun BridgeScreen() {
       Modifier.fillMaxSize().padding(inner).consumeWindowInsets(inner).imePadding().verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 8.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-      // ---------- Status ----------
       key(tick) { StatusCard(status, configured, lastReq) }
 
-      // ---------- Primary action: push registration ----------
       Button(
         onClick = {
           if (!configured || dirty) { if (!configured && (url.isBlank() || token.isBlank())) { goToSetup("Set up the Worker URL and device token first"); return@Button }; if (!save()) return@Button }
@@ -179,7 +174,6 @@ fun BridgeScreen() {
         Text(if (status.pushRegisteredAt != null) "Re-register device" else "Register device", style = MaterialTheme.typography.titleMedium)
       }
 
-      // ---------- Setup ----------
       ElevatedCard(Modifier.fillMaxWidth().onPlacedY { setupY = it }) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
           SectionTitle(Icons.Outlined.Settings, "Setup")
@@ -217,7 +211,6 @@ fun BridgeScreen() {
         }
       }
 
-      // ---------- Health Connect ----------
       ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
           SectionTitle(Icons.Outlined.FavoriteBorder, "Health Connect")
@@ -290,7 +283,6 @@ private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long,
   Spacer(Modifier.width(8.dp)); Text(text, style = MaterialTheme.typography.bodyMedium)
 }
 
-private fun fmt(t: Long) = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(t))
 private fun ago(t: Long): String {
   val s = (System.currentTimeMillis() - t) / 1000
   return when { s < 60 -> "just now"; s < 3600 -> "${s / 60} min ago"; s < 86400 -> "${s / 3600} h ago"; else -> DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t)) }
@@ -304,7 +296,6 @@ private suspend fun readHc(ctx: Context): HcInfo {
   return HcInfo(sdk, HealthHandler.READ_PERMS.count { it in g }, HealthHandler.READ_PERMS.size, bg, HealthHandler.BACKGROUND_PERM in g)
 }
 
-/** Masks all but the last 4 characters without using a password input type (avoids Android 15 sensitive-content blanking). */
 private object MaskTransformation : VisualTransformation {
   override fun filter(text: AnnotatedString): TransformedText {
     val n = text.length

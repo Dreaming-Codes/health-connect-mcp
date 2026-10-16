@@ -1,5 +1,4 @@
 #!/bin/bash
-# helpers for emulator UI tests
 A=/workspace/android-sdk/platform-tools/adb
 shot() { timeout 60 $A exec-out screencap -p > /workspace/health-connect-mcp/screens/$1.png && echo "shot $1"; }
 tapText() { # tap center of first node whose text or content-desc matches $1

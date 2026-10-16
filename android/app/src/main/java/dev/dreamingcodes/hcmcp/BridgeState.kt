@@ -12,7 +12,6 @@ data class BridgeStatus(
   val registering: Boolean = false,
 )
 
-/** Process-wide status for the UI. Holds method names and timestamps only, never health values. */
 object BridgeState {
   private val _s = MutableStateFlow(BridgeStatus())
   val status: StateFlow<BridgeStatus> = _s

@@ -6,19 +6,25 @@ import { FcmError, mintAccessToken, sendData, type ServiceAccount } from "./fcm"
 
 export interface Env {
   PHONE: DurableObjectNamespace<PhoneHub>;
-  DEVICE_TOKEN_HASH: string; // hex sha256 of the device token
+  DEVICE_TOKEN_HASH: string;
   MCP_TOKEN: string;
   PUSH_TIMEOUT_MS?: string;
-  FCM_SERVICE_ACCOUNT?: string; // service-account JSON
+  FCM_SERVICE_ACCOUNT?: string;
 }
 
 const DEFAULT_TZ = "Europe/Amsterdam";
-const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
+const OAUTH_REFRESH_MARGIN_MS = 120_000;
+
+const json = (o: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json", ...headers } });
+const unauthorized = () => json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
+const isoOrNull = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
 async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
 function safeEqual(a: string, b: string): boolean {
   const ea = new TextEncoder().encode(a), eb = new TextEncoder().encode(b);
   if (ea.length !== eb.length) return false;
@@ -26,68 +32,100 @@ function safeEqual(a: string, b: string): boolean {
   for (let i = 0; i < ea.length; i++) r |= ea[i] ^ eb[i];
   return r === 0;
 }
+
 function bearer(req: Request): string | null {
-  const h = req.headers.get("Authorization") ?? "";
-  const m = /^Bearer\s+(.+)$/i.exec(h);
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers.get("Authorization") ?? "");
   return m ? m[1].trim() : null;
 }
-const unauthorized = () =>
-  new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json", "WWW-Authenticate": "Bearer" } });
+
+async function isDevice(req: Request, env: Env): Promise<boolean> {
+  const t = bearer(req);
+  return !!t && !!env.DEVICE_TOKEN_HASH && safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase());
+}
+
+function isMcpClient(req: Request, env: Env): boolean {
+  const t = bearer(req);
+  return !!t && !!env.MCP_TOKEN && safeEqual(t, env.MCP_TOKEN);
+}
+
+const phoneHub = (env: Env) => env.PHONE.get(env.PHONE.idFromName("phone"));
 
 export class PhoneError extends Error {}
 
-/** One instance ("phone") per user. Holds the FCM token, OAuth cache and in-flight push requests. */
-export class PhoneHub extends DurableObject<Env> {
-  private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; sentAt: number }>();
-  private oauth?: { token: string; expiresAt: number };
+const Registration = z.object({
+  fcm_token: z.string().min(20),
+  app_version: z.unknown(),
+  device: z.unknown(),
+  mode: z.unknown(),
+});
+type Registration = z.infer<typeof Registration>;
 
-  /** Resolve a pending request from either transport. Returns false if unknown/expired. */
-  async settle(id: string, data: any): Promise<boolean> {
+type PhoneReply = { ok: true; result: unknown } | { ok: false; code?: unknown; message?: unknown };
+
+function parsePhoneReply(body: Record<string, any>): PhoneReply {
+  return body.error ? { ok: false, code: body.error.code, message: body.error.message } : { ok: true, result: body.result };
+}
+
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; sentAt: number };
+type OAuthToken = { token: string; expiresAt: number };
+
+export class PhoneHub extends DurableObject<Env> {
+  private pending = new Map<string, Pending>();
+  private oauth?: OAuthToken;
+
+  async settle(id: string, reply: PhoneReply): Promise<boolean> {
     const p = this.pending.get(id);
     if (!p) return false;
     this.pending.delete(id);
     clearTimeout(p.timer);
-    const latency = Date.now() - p.sentAt;
-    await this.ctx.storage.put("lastSeen", Date.now());
-    await this.ctx.storage.put("lastPush", { latency_ms: latency, at: Date.now() });
-    if (data?.error) p.reject(new PhoneError(`phone error ${data.error.code ?? ""}: ${data.error.message ?? "unknown"}`.trim()));
-    else p.resolve(data?.result);
+    const now = Date.now();
+    await this.ctx.storage.put("lastSeen", now);
+    await this.ctx.storage.put("lastPush", { latency_ms: now - p.sentAt, at: now });
+    if (reply.ok) p.resolve(reply.result);
+    else p.reject(new PhoneError(`phone error ${reply.code ?? ""}: ${reply.message ?? "unknown"}`.trim()));
     return true;
   }
 
-  /** Refresh stored device metadata from a live phone answer; returns the stored record. */
-  async updateDevice(info: { app_version?: string; device?: string }): Promise<Record<string, unknown>> {
+  async updateDevice(info: { app_version?: unknown; device?: unknown }): Promise<Record<string, unknown>> {
     const prev = (await this.ctx.storage.get<Record<string, unknown>>("device")) ?? {};
-    const next = { ...prev, ...Object.fromEntries(Object.entries(info).filter(([, v]) => typeof v === "string" && v)), ts: Date.now() };
+    const fresh = Object.fromEntries(Object.entries(info).filter(([, v]) => typeof v === "string" && v));
+    const next = { ...prev, ...fresh, ts: Date.now() };
     await this.ctx.storage.put("device", next);
     return next;
   }
 
-  /** Phone registers/refreshes its FCM token (authenticated by the Worker). */
-  async register(info: { fcm_token: string; app_version?: string; device?: string; mode?: string }): Promise<void> {
+  async register(info: Registration): Promise<void> {
     await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now() });
     await this.ctx.storage.put("device", { app_version: info.app_version, device: info.device, mode: info.mode, ts: Date.now() });
     await this.ctx.storage.put("lastSeen", Date.now());
   }
 
   private async accessToken(sa: ServiceAccount): Promise<string> {
-    if (this.oauth && this.oauth.expiresAt - Date.now() > 120_000) return this.oauth.token;
-    const stored = await this.ctx.storage.get<{ token: string; expiresAt: number }>("oauth");
-    if (stored && stored.expiresAt - Date.now() > 120_000) return (this.oauth = stored).token;
+    const fresh = (t?: OAuthToken) => !!t && t.expiresAt - Date.now() > OAUTH_REFRESH_MARGIN_MS;
+    if (fresh(this.oauth)) return this.oauth!.token;
+    const stored = await this.ctx.storage.get<OAuthToken>("oauth");
+    if (fresh(stored)) return (this.oauth = stored!).token;
     this.oauth = await mintAccessToken(sa);
     await this.ctx.storage.put("oauth", this.oauth);
     return this.oauth.token;
   }
 
-  /** Diagnostic: mint an OAuth token and send to an arbitrary FCM token (used by tests with a fake token). */
   async fcmSelfTest(fakeToken: string): Promise<Record<string, unknown>> {
     const sa = this.serviceAccount();
     if (!sa) return { ok: false, error: "FCM_SERVICE_ACCOUNT not configured" };
     const out: Record<string, unknown> = {};
-    try { const t = await this.accessToken(sa); out.oauth = `ok (${t.length} chars, expires ${new Date(this.oauth!.expiresAt).toISOString()})`; }
-    catch (e: any) { return { ok: false, oauth: String(e.message) }; }
-    try { out.send = await sendData(sa, this.oauth!.token, fakeToken, { type: "selftest" }, 10); }
-    catch (e: any) { out.send_error = String(e.message); out.code = e.code; }
+    try {
+      const t = await this.accessToken(sa);
+      out.oauth = `ok (${t.length} chars, expires ${new Date(this.oauth!.expiresAt).toISOString()})`;
+    } catch (e: any) {
+      return { ok: false, oauth: String(e.message) };
+    }
+    try {
+      out.send = await sendData(sa, this.oauth!.token, fakeToken, { type: "selftest" }, 10);
+    } catch (e: any) {
+      out.send_error = String(e.message);
+      out.code = e.code;
+    }
     return out;
   }
 
@@ -96,28 +134,26 @@ export class PhoneHub extends DurableObject<Env> {
     try { return JSON.parse(this.env.FCM_SERVICE_ACCOUNT); } catch { return undefined; }
   }
 
-  private async lastSeenMs(): Promise<number | undefined> {
-    return (await this.ctx.storage.get<number>("lastSeen")) ?? undefined;
+  private async lastSeen(): Promise<number | undefined> {
+    return this.ctx.storage.get<number>("lastSeen");
   }
 
   async status(): Promise<Record<string, unknown>> {
-    const ls = await this.lastSeenMs();
     const fcm = await this.ctx.storage.get<{ token: string; registered_at: number }>("fcm");
+    const lastPush = await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush");
     return {
       mode: fcm ? "push" : "none",
       push_registered: !!fcm,
-      push_registered_at: fcm ? new Date(fcm.registered_at).toISOString() : null,
-      last_push: ((p) => (p ? { latency_ms: p.latency_ms, at: new Date(p.at).toISOString() } : null))(await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush")),
-      last_seen: ls ? new Date(ls).toISOString() : null,
+      push_registered_at: isoOrNull(fcm?.registered_at),
+      last_push: lastPush ? { latency_ms: lastPush.latency_ms, at: new Date(lastPush.at).toISOString() } : null,
+      last_seen: isoOrNull(await this.lastSeen()),
       device: (await this.ctx.storage.get("device")) ?? null,
     };
   }
 
-  /** Forward a request to the phone and await its answer. */
   async call(method: string, params: unknown): Promise<unknown> {
     const id = crypto.randomUUID();
-    const lastSeen = async () => { const ls = await this.lastSeenMs(); return ls ? new Date(ls).toISOString() : "never"; };
-    // Push path: wake the phone via FCM; it POSTs the answer to /phone/result/<id>.
+    const lastSeen = async () => isoOrNull(await this.lastSeen()) ?? "never";
     const fcm = await this.ctx.storage.get<{ token: string }>("fcm");
     const sa = this.serviceAccount();
     if (!fcm || !sa) throw new PhoneError(`phone offline (last seen ${await lastSeen()}; ${!fcm ? "no push registration" : "push not configured on server"})`);
@@ -130,7 +166,7 @@ export class PhoneHub extends DurableObject<Env> {
       this.pending.set(id, { resolve, reject, timer, sentAt: Date.now() });
     });
     try {
-      // Data only: request id, method, params. Never health data.
+      // The push payload transits Google: request id, method and params only, never health data.
       await sendData(sa, await this.accessToken(sa), fcm.token, { id, method, params: JSON.stringify(params ?? {}) }, Math.ceil(timeoutMs / 1000));
     } catch (e: any) {
       const p = this.pending.get(id);
@@ -149,7 +185,7 @@ export class PhoneHub extends DurableObject<Env> {
 const HAS_OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i;
 const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
 
-/** Offset (ms) of `tz` at instant `ms`: local wall time minus UTC. */
+/** Local wall time minus UTC for `tz` at instant `ms`. */
 function tzOffsetMs(ms: number, tz: string): number {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms));
   const g = (t: string) => Number(parts.find((p) => p.type === t)?.value);
@@ -157,24 +193,27 @@ function tzOffsetMs(ms: number, tz: string): number {
 }
 const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
 
-/**
- * Accepts ISO with offset/Z (returned unchanged), a plain date (YYYY-MM-DD = local midnight) or a local
- * date-time without offset, interpreted in `tz`. Returns ISO-8601 with an explicit offset.
- */
+/** Offset-less input is wall time in `tz`; a bare date is local midnight. Output always carries an explicit offset. */
 export function normalizeTime(s: string, tz: string): string {
   s = s.trim();
-  if (HAS_OFFSET.test(s)) { if (Number.isNaN(Date.parse(s))) throw new Error(`invalid date-time: ${s}`); return s; }
+  if (HAS_OFFSET.test(s)) {
+    if (Number.isNaN(Date.parse(s))) throw new Error(`invalid date-time: ${s}`);
+    return s;
+  }
   const m = LOCAL_RE.exec(s);
   if (!m) throw new Error(`invalid date-time: ${s} (use YYYY-MM-DD, YYYY-MM-DDTHH:mm[:ss] or ISO-8601 with offset)`);
   const [y, mo, d, h = "0", mi = "0", se = "0", ms = "0"] = m.slice(1).map((v) => v ?? undefined) as string[];
   const wall = Date.UTC(+y, +mo - 1, +d, +h, +mi, +se, +ms.padEnd(3, "0"));
-  let off = tzOffsetMs(wall, tz);
-  off = tzOffsetMs(wall - off, tz); // second pass handles DST boundaries
+  // Second pass: the offset at the wall time can differ from the offset at the true instant across a DST change.
+  const off = tzOffsetMs(wall - tzOffsetMs(wall, tz), tz);
   const oMin = Math.round(off / 60000);
   const sign = oMin < 0 ? "-" : "+";
   return `${y}-${mo}-${d}T${pad(+h)}:${pad(+mi)}:${pad(+se)}${ms !== "0" ? "." + ms.padEnd(3, "0") : ""}${sign}${pad(Math.trunc(Math.abs(oMin) / 60))}:${pad(Math.abs(oMin) % 60)}`;
 }
-function validTz(tz: string) { try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; } }
+
+function validTz(tz: string) {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
+}
 
 const iso = z.string().refine((s) => HAS_OFFSET.test(s.trim()) ? !Number.isNaN(Date.parse(s)) : LOCAL_RE.test(s.trim()), "must be YYYY-MM-DD, a local date-time (YYYY-MM-DDTHH:mm[:ss], read in `timezone`) or ISO-8601 with offset");
 const range = {
@@ -190,85 +229,92 @@ export const RECORD_TYPES = [
   "Hydration", "OxygenSaturation", "RespiratoryRate", "BloodPressure", "BloodGlucose", "BodyTemperature", "Vo2Max", "Speed", "Power",
 ] as const;
 
-function buildServer(env: Env): McpServer {
-  const hub = env.PHONE.get(env.PHONE.idFromName("phone"));
-  const server = new McpServer({ name: "health-connect", version: "0.1.0" });
-  const forward = async (method: string, params: any) => {
-    try {
-      if (params && typeof params.start === "string") {
-        const tz = params.timezone ?? DEFAULT_TZ;
-        if (!validTz(tz)) throw new Error(`invalid timezone: ${tz}`);
-        params = { ...params, timezone: tz, start: normalizeTime(params.start, tz), end: normalizeTime(params.end, tz) };
-        if (Date.parse(params.end) <= Date.parse(params.start)) throw new Error("end must be after start");
-      }
-      const result = await hub.call(method, params);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    } catch (e: any) {
-      return { isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] };
-    }
-  };
-  const tool = (name: string, description: string, shape: z.ZodRawShape) =>
-    server.registerTool(name, { description, inputSchema: shape }, async (args: any) => forward(name, args));
-
-  tool("get_steps", "Step counts from Health Connect, aggregated per bucket (live from the phone).", { ...range, bucket });
-  tool("get_sleep", "Sleep sessions with stages and durations overlapping the range.", range);
-  tool("get_heart_rate", "Heart rate: min/avg/max per bucket, plus resting HR when available.", { ...range, bucket });
-  tool("get_exercise_sessions", "Exercise/workout sessions (type, duration, calories, distance, avg HR).", range);
-  tool("get_weight", "Weight measurements (kg) in the range.", range);
-  tool("get_nutrition", "Nutrition entries and per-day totals (energy, macros).", range);
-  tool("read_records", "Generic raw read of any Health Connect record type in a time range.", {
+const PHONE_TOOLS: [name: string, description: string, shape: z.ZodRawShape][] = [
+  ["get_steps", "Step counts from Health Connect, aggregated per bucket (live from the phone).", { ...range, bucket }],
+  ["get_sleep", "Sleep sessions with stages and durations overlapping the range.", range],
+  ["get_heart_rate", "Heart rate: min/avg/max per bucket, plus resting HR when available.", { ...range, bucket }],
+  ["get_exercise_sessions", "Exercise/workout sessions (type, duration, calories, distance, avg HR).", range],
+  ["get_weight", "Weight measurements (kg) in the range.", range],
+  ["get_nutrition", "Nutrition entries and per-day totals (energy, macros).", range],
+  ["read_records", "Generic raw read of any Health Connect record type in a time range.", {
     recordType: z.enum(RECORD_TYPES).describe("Health Connect record type name"),
     ...range,
     limit: z.number().int().min(1).max(1000).default(200),
-  });
+  }],
+];
+
+type RangeArgs = { start: string; end: string; timezone?: string; [k: string]: unknown };
+
+function normalizeRange(args: RangeArgs): RangeArgs {
+  const tz = args.timezone ?? DEFAULT_TZ;
+  if (!validTz(tz)) throw new Error(`invalid timezone: ${tz}`);
+  const out = { ...args, timezone: tz, start: normalizeTime(args.start, tz), end: normalizeTime(args.end, tz) };
+  if (Date.parse(out.end) <= Date.parse(out.start)) throw new Error("end must be after start");
+  return out;
+}
+
+const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }] });
+
+function buildServer(env: Env): McpServer {
+  const hub = phoneHub(env);
+  const server = new McpServer({ name: "health-connect", version: "0.1.0" });
+  for (const [name, description, shape] of PHONE_TOOLS) {
+    server.registerTool(name, { description, inputSchema: shape }, async (args: any) => {
+      try {
+        return text(await hub.call(name, normalizeRange(args)));
+      } catch (e: any) {
+        return { isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] };
+      }
+    });
+  }
   server.registerTool("get_phone_status", { description: "Whether the phone is connected, last-seen time, app/permission info.", inputSchema: {} }, async () => {
     const s: Record<string, unknown> = await hub.status();
     if (s.push_registered) {
       try {
-        s.phone = await hub.call("get_phone_status", {});
-        // Keep stored device info in sync with what the phone reports live (registration data can be stale).
-        const ph: any = s.phone;
-        if (ph && typeof ph === "object") s.device = await hub.updateDevice({ app_version: ph.app_version, device: ph.device });
+        const phone: any = await hub.call("get_phone_status", {});
+        s.phone = phone;
+        // Registration-time device info goes stale after app updates; the live answer wins.
+        if (phone && typeof phone === "object") s.device = await hub.updateDevice({ app_version: phone.app_version, device: phone.device });
       } catch (e: any) { s.phone_error = String(e?.message ?? e); }
     }
-    return { content: [{ type: "text" as const, text: JSON.stringify(s, null, 2) }] };
+    return text(s);
   });
   return server;
 }
 
+const RESULT_PREFIX = "/phone/result/";
+
+async function handlePhone(req: Request, env: Env, path: string): Promise<Response> {
+  if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+  if (!(await isDevice(req, env))) return unauthorized();
+  const body: unknown = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return json({ error: "invalid json" }, 400);
+  if (path === "/phone/register") {
+    const reg = Registration.safeParse(body);
+    if (!reg.success) return json({ error: "fcm_token required" }, 400);
+    await phoneHub(env).register(reg.data);
+    return json({ ok: true, push_configured: !!env.FCM_SERVICE_ACCOUNT });
+  }
+  const id = decodeURIComponent(path.slice(RESULT_PREFIX.length));
+  const ok = await phoneHub(env).settle(id, parsePhoneReply(body));
+  return ok ? json({ ok: true }) : json({ error: "unknown or expired request id" }, 410);
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    const url = new URL(req.url);
-    if (url.pathname === "/phone/register" || url.pathname.startsWith("/phone/result/")) {
-      if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
-      const t = bearer(req);
-      if (!t || !env.DEVICE_TOKEN_HASH || !safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase())) return unauthorized();
-      const body: any = await req.json().catch(() => null);
-      if (!body || typeof body !== "object") return json({ error: "invalid json" }, 400);
-      const hub = env.PHONE.get(env.PHONE.idFromName("phone"));
-      if (url.pathname === "/phone/register") {
-        if (typeof body.fcm_token !== "string" || body.fcm_token.length < 20) return json({ error: "fcm_token required" }, 400);
-        await hub.register({ fcm_token: body.fcm_token, app_version: body.app_version, device: body.device, mode: body.mode });
-        return json({ ok: true, push_configured: !!env.FCM_SERVICE_ACCOUNT });
-      }
-      const id = decodeURIComponent(url.pathname.slice("/phone/result/".length));
-      const ok = await hub.settle(id, body);
-      return ok ? json({ ok: true }) : json({ error: "unknown or expired request id" }, 410);
+    const { pathname, searchParams } = new URL(req.url);
+    if (pathname === "/phone/register" || pathname.startsWith(RESULT_PREFIX)) return handlePhone(req, env, pathname);
+    if (pathname === "/admin/fcm-selftest") {
+      if (!isMcpClient(req, env)) return unauthorized();
+      return json(await phoneHub(env).fcmSelfTest(searchParams.get("token") ?? "fake-token-for-selftest"));
     }
-    if (url.pathname === "/admin/fcm-selftest") {
-      const t = bearer(req);
-      if (!t || !env.MCP_TOKEN || !safeEqual(t, env.MCP_TOKEN)) return unauthorized();
-      return json(await env.PHONE.get(env.PHONE.idFromName("phone")).fcmSelfTest(url.searchParams.get("token") ?? "fake-token-for-selftest"));
-    }
-    if (url.pathname === "/mcp") {
-      const t = bearer(req);
-      if (!t || !env.MCP_TOKEN || !safeEqual(t, env.MCP_TOKEN)) return unauthorized();
-      const server = buildServer(env);
+    if (pathname === "/mcp") {
+      if (!isMcpClient(req, env)) return unauthorized();
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      await server.connect(transport);
+      await buildServer(env).connect(transport);
       return transport.handleRequest(req);
     }
-    if (url.pathname === "/") return new Response("health-connect-mcp ok\n");
+    if (pathname === "/") return new Response("health-connect-mcp ok\n");
     return new Response("not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
