@@ -16,9 +16,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** HTTP calls from the phone to the Worker (all authenticated with the device token). */
+private const val TAG = "HCBridge"
+
 object WorkerApi {
-  private const val TAG = "HCBridge"
   private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).writeTimeout(8, TimeUnit.SECONDS).build()
   private val JSON = "application/json".toMediaType()
 
@@ -29,7 +29,7 @@ object WorkerApi {
     http.newCall(req).execute().use { return it.code to (it.body?.string() ?: "") }
   }
 
-  /** Fetch the FCM token and register it with the Worker. Blocking: call off the main thread. */
+  /** Blocking: call off the main thread. */
   fun register(ctx: Context, fcmToken: String? = null): String? {
     return try {
       val tok = fcmToken ?: Tasks.await(FirebaseMessaging.getInstance().token, 20, TimeUnit.SECONDS)
@@ -46,10 +46,6 @@ object WorkerApi {
   }
 }
 
-/**
- * Receives high-priority FCM data messages {id, method, params} (no health data), runs the Health Connect
- * query in the background and POSTs the answer to /phone/result/<id>. No foreground service needed.
- */
 class PushService : FirebaseMessagingService() {
   override fun onNewToken(token: String) {
     if (Settings.isConfigured(this)) WorkerApi.register(this, token)
@@ -60,7 +56,7 @@ class PushService : FirebaseMessagingService() {
     val id = d["id"] ?: return
     val method = d["method"] ?: return
     val reply = JSONObject()
-    // onMessageReceived runs on a background thread; high-priority messages get ~20 s.
+    // High-priority messages get about 20 s of execution; leave headroom to post the reply.
     runBlocking {
       try {
         withTimeout(15_000) { reply.put("result", HealthHandler(this@PushService).handle(method, JSONObject(d["params"] ?: "{}"))) }
@@ -72,8 +68,8 @@ class PushService : FirebaseMessagingService() {
     }
     try {
       val (code, _) = WorkerApi.post(this, "/phone/result/$id", reply)
-      Log.i("HCBridge", "push handled $method -> HTTP $code") // method name only
-    } catch (e: Exception) { Log.w("HCBridge", "result post failed: ${e.javaClass.simpleName}") }
+      Log.i(TAG, "push handled $method -> HTTP $code")
+    } catch (e: Exception) { Log.w(TAG, "result post failed: ${e.javaClass.simpleName}") }
     val now = System.currentTimeMillis()
     Settings.setLastRequest(this, now, method)
     BridgeState.set { it.copy(lastRequestAt = now, lastRequestMethod = method) }

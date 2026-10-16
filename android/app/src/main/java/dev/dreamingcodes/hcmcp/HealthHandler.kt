@@ -21,17 +21,10 @@ import kotlin.reflect.KClass
 
 class BadParams(msg: String) : Exception(msg)
 
-/** Implements the methods from PROTOCOL.md. Never logs health values. */
 class HealthHandler(private val ctx: Context) {
   private val client by lazy { HealthConnectClient.getOrCreate(ctx) }
 
   companion object {
-    val READ_PERMS: Set<String> = setOf(
-      StepsRecord::class, HeartRateRecord::class, RestingHeartRateRecord::class, SleepSessionRecord::class,
-      ExerciseSessionRecord::class, DistanceRecord::class, ActiveCaloriesBurnedRecord::class,
-      TotalCaloriesBurnedRecord::class, WeightRecord::class, NutritionRecord::class, HydrationRecord::class,
-    ).map { HealthPermission.getReadPermission(it) }.toSet()
-
     const val BACKGROUND_PERM = HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
     fun backgroundAvailable(c: HealthConnectClient) =
       c.features.getFeatureStatus(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
@@ -45,6 +38,7 @@ class HealthHandler(private val ctx: Context) {
       "TotalCaloriesBurned" to TotalCaloriesBurnedRecord::class, "Weight" to WeightRecord::class,
       "Nutrition" to NutritionRecord::class, "Hydration" to HydrationRecord::class,
     )
+    val READ_PERMS: Set<String> = TYPES.values.map { HealthPermission.getReadPermission(it) }.toSet()
     private val SLEEP_STAGES = mapOf(1 to "awake", 2 to "sleeping", 3 to "out_of_bed", 4 to "light", 5 to "deep", 6 to "rem", 7 to "awake_in_bed", 0 to "unknown")
     private val EXERCISE = mapOf(56 to "running", 79 to "walking", 8 to "biking", 9 to "biking_stationary", 74 to "swimming_pool",
       73 to "swimming_open_water", 70 to "strength_training", 80 to "weightlifting", 37 to "hiking", 83 to "yoga", 25 to "elliptical",
