@@ -32,11 +32,13 @@ function seedContact(name, phone) {
 async function contactsReady() {
   for (const end = Date.now() + 300000; Date.now() < end; await sleep(5000)) {
     const out = adb("shell", "content query --uri content://com.android.contacts/data/phones --projection display_name 2>&1");
-    if (!out.includes("Could not find provider")) return out;
+    if (!/Could not find provider|Exception/.test(out)) return out;
   }
   throw new Error("contacts provider did not start");
 }
-if (!(await contactsReady()).includes("Ann Example")) seedContact("Ann Example", "5551234");
+for (let tries = 3; !(await contactsReady()).includes("Ann Example") && tries > 0; tries--) {
+  try { seedContact("Ann Example", "5551234"); } catch (e) { console.log(`seedContact retry: ${e.message.split("\n")[0]}`); await sleep(10000); }
+}
 adb("shell", "input", "keyevent", "WAKEUP"); adb("shell", "wm", "dismiss-keyguard");
 adb("shell", "am", "start", "-W", "-n", `${P}/.MainActivity`);
 await waitFor(/text="Worker URL"/, 120000);
