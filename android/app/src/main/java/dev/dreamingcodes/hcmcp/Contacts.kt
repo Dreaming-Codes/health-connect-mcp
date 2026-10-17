@@ -11,7 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class ContactsHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("search_contacts")
+  override val methods = mapOf("search_contacts" runs ::search)
   private val cr = ctx.contentResolver
 
   companion object {
@@ -19,7 +19,7 @@ class ContactsHandler(private val ctx: Context) : MethodGroup {
     fun granted(ctx: Context) = ctx.has(Manifest.permission.READ_CONTACTS)
   }
 
-  override suspend fun handle(method: String, p: JSONObject): Any {
+  private suspend fun search(p: JSONObject): JSONObject {
     if (!granted(ctx)) throw PhoneFailure("contacts_permission_missing", "contacts permission is not granted; open the app and tap Allow contacts")
     val query = p.optString("query").trim().ifEmpty { throw BadParams("query required") }
     val limit = p.optInt("limit", 10).coerceIn(1, 50)

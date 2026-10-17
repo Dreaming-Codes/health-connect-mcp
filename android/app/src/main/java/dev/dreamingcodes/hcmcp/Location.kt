@@ -12,10 +12,10 @@ import java.time.Instant
 import kotlin.coroutines.resume
 
 class LocationHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("get_location")
+  override val methods = mapOf("get_location" runs ::locate)
   private val lm = ctx.getSystemService(LocationManager::class.java)
 
-  override suspend fun handle(method: String, p: JSONObject): Any {
+  private suspend fun locate(p: JSONObject): JSONObject {
     if (!Capabilities.location(ctx)) throw PhoneFailure("location_permission_missing", "location permission is not granted; open the app and tap Allow location")
     if (!Capabilities.backgroundLocation(ctx)) throw PhoneFailure("background_location_missing", "location is only allowed while the app is open; set it to Allow all the time")
     if (!lm.isLocationEnabled) throw PhoneFailure("location_disabled", "location is turned off on the phone")

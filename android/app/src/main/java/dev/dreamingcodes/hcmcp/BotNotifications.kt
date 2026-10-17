@@ -30,10 +30,10 @@ enum class BotImportance(val level: Int) {
 data class BotAction(val id: String, val label: String, val reply: Boolean, val placeholder: String?)
 
 class BotNotifications(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("send_notification")
+  override val methods = mapOf("send_notification" runs ::send)
   private val nm = ctx.getSystemService(NotificationManager::class.java)
 
-  override suspend fun handle(method: String, p: JSONObject): Any {
+  private fun send(p: JSONObject): JSONObject {
     if (!Capabilities.canPostNotifications(ctx)) throw PhoneFailure("notifications_permission_missing", "the app may not post notifications; open the app and tap Allow notifications")
     val title = p.optString("title").ifEmpty { throw BadParams("title required") }
     val tag = p.optString("tag").ifEmpty { "n" + UUID.randomUUID().toString().take(8) }

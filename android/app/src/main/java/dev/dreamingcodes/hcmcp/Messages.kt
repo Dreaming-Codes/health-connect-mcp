@@ -30,7 +30,12 @@ data class SmsThread(val id: Long, val addresses: List<String>, val snippet: Str
 data class Message(val id: Long, val kind: String, val threadId: Long, val address: String?, val date: Long, val box: Int, val read: Boolean, val text: String?)
 
 class MessagesHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("list_threads", "list_messages", "send_message", "reply_to_thread")
+  override val methods = mapOf(
+    "list_threads" runs { requireRead(); listThreads(it) },
+    "list_messages" runs { requireRead(); listMessages(it) },
+    "send_message" runs { send(it.optString("to").ifEmpty { throw BadParams("to required") }, text(it)) },
+    "reply_to_thread" runs { requireRead(); reply(it.optLong("thread_id"), text(it)) },
+  )
   private val cr = ctx.contentResolver
 
   companion object {
@@ -41,14 +46,6 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
     private const val SENT_WAIT_MS = 8_000L
     private const val DELIVERY_WAIT_MS = 4_000L
     private val BOX_NAMES = mapOf(1 to "inbox", 2 to "sent", 3 to "draft", 4 to "outbox", 5 to "failed", 6 to "queued")
-  }
-
-  override suspend fun handle(method: String, p: JSONObject): Any = when (method) {
-    "list_threads" -> { requireRead(); listThreads(p) }
-    "list_messages" -> { requireRead(); listMessages(p) }
-    "send_message" -> send(p.optString("to").ifEmpty { throw BadParams("to required") }, text(p))
-    "reply_to_thread" -> { requireRead(); reply(p.optLong("thread_id"), text(p)) }
-    else -> throw NoSuchMethodException(method)
   }
 
   private fun text(p: JSONObject) = p.optString("text").ifEmpty { throw BadParams("text required") }

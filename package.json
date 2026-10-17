@@ -7,6 +7,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node test/sim-phone.mjs",
+    "test:methods": "node test/methods.mjs",
     "test:contract": "bash test/with-worker.sh test/contract.mjs",
     "docs:tools": "bash test/with-worker.sh scripts/tools-reference.mjs > docs/reference/tools.md",
     "bundle": "wrangler deploy --dry-run --minify --outdir dist/worker"

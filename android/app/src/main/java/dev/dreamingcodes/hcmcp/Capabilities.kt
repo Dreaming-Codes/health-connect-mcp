@@ -7,9 +7,12 @@ import android.content.pm.PackageManager
 import android.os.Build
 import org.json.JSONObject
 
+typealias PhoneMethod = suspend (JSONObject) -> Any
+
+infix fun String.runs(f: PhoneMethod) = this to f
+
 interface MethodGroup {
-  val methods: Set<String>
-  suspend fun handle(method: String, p: JSONObject): Any
+  val methods: Map<String, PhoneMethod>
 }
 
 fun Context.has(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED

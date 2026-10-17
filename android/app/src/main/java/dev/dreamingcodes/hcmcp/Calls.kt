@@ -95,10 +95,10 @@ object Calls {
 }
 
 class CallHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("start_call")
+  override val methods = mapOf("start_call" runs ::ring)
   private val nm = ctx.getSystemService(NotificationManager::class.java)
 
-  override suspend fun handle(method: String, p: JSONObject): Any {
+  private fun ring(p: JSONObject): JSONObject {
     if (!Capabilities.canPostNotifications(ctx)) throw PhoneFailure("notifications_permission_missing", "the app may not post notifications; open the app and tap Allow notifications")
     val now = System.currentTimeMillis()
     val call = IncomingCall.parse(p, now)

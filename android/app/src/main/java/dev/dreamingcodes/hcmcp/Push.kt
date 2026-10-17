@@ -8,6 +8,7 @@ import com.google.android.gms.tasks.Tasks
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
@@ -33,7 +34,14 @@ data class IssuedCode(val code: String, val expiresAt: String, val claimUrl: Str
   }
 }
 
-class PhoneFailure(val code: String, message: String) : Exception(message)
+open class PhoneFailure(val code: String, message: String) : Exception(message)
+
+class BadParams(message: String) : PhoneFailure("bad_params", message)
+
+fun errorJson(e: Throwable): JSONObject {
+  val code = when (e) { is PhoneFailure -> e.code; is SecurityException -> "permission_denied"; is TimeoutCancellationException -> "timeout"; else -> "internal" }
+  return JSONObject().put("code", code).put("message", e.message ?: e.javaClass.simpleName)
+}
 
 object WorkerApi {
   private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).writeTimeout(8, TimeUnit.SECONDS).build()
@@ -88,8 +96,9 @@ object WorkerApi {
 }
 
 suspend fun dispatch(ctx: Context, method: String, params: JSONObject): Any {
-  val groups = listOf(NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), LocationHandler(ctx), MessagesHandler(ctx), ContactsHandler(ctx))
-  return groups.firstOrNull { method in it.methods }?.handle(method, params) ?: HealthHandler(ctx).handle(method, params)
+  val groups = listOf(HealthHandler(ctx), NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), LocationHandler(ctx), MessagesHandler(ctx), ContactsHandler(ctx))
+  val run = groups.firstNotNullOfOrNull { it.methods[method] } ?: throw PhoneFailure("unknown_method", method)
+  return run(params)
 }
 
 class PushService : FirebaseMessagingService() {
@@ -107,9 +116,7 @@ class PushService : FirebaseMessagingService() {
       try {
         withTimeout(15_000) { reply.put("result", dispatch(this@PushService, method, JSONObject(d["params"] ?: "{}"))) }
       } catch (e: Throwable) {
-        val code = when (e) { is PhoneFailure -> e.code; is SecurityException -> "permission_denied"; is BadParams -> "bad_params"; is NoSuchMethodException -> "unknown_method"
-          is kotlinx.coroutines.TimeoutCancellationException -> "timeout"; else -> "internal" }
-        reply.put("error", JSONObject().put("code", code).put("message", e.message ?: e.javaClass.simpleName))
+        reply.put("error", errorJson(e))
       }
     }
     try {

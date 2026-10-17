@@ -55,21 +55,15 @@ sealed interface NotificationAction {
 }
 
 class NotificationHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("list_notifications", "dismiss_notification", "perform_notification_action")
+  override val methods = mapOf(
+    "list_notifications" runs { connectedListener(); list(it) },
+    "dismiss_notification" runs { dismiss(connectedListener(), it.key()) },
+    "perform_notification_action" runs { perform(connectedListener(), it.key(), it.action(), it.optString("replyText").takeIf { r -> r.isNotEmpty() }) },
+  )
 
   companion object {
     private const val REBIND_WAIT_MS = 3_000L
     private const val REMOVAL_WAIT_MS = 1_500L
-  }
-
-  override suspend fun handle(method: String, p: JSONObject): JSONObject {
-    val listener = connectedListener()
-    return when (method) {
-      "list_notifications" -> list(p)
-      "dismiss_notification" -> dismiss(listener, p.key())
-      "perform_notification_action" -> perform(listener, p.key(), p.action(), p.optString("replyText").takeIf { it.isNotEmpty() })
-      else -> throw NoSuchMethodException(method)
-    }
   }
 
   private suspend fun connectedListener(): NotificationListener {

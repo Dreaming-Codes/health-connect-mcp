@@ -19,9 +19,7 @@ import org.json.JSONObject
 import java.time.*
 import kotlin.reflect.KClass
 
-class BadParams(msg: String) : Exception(msg)
-
-class HealthHandler(private val ctx: Context) {
+class HealthHandler(private val ctx: Context) : MethodGroup {
   private val client by lazy { HealthConnectClient.getOrCreate(ctx) }
 
   companion object {
@@ -60,17 +58,16 @@ class HealthHandler(private val ctx: Context) {
   }
   private fun iso(i: Instant, tz: ZoneId) = i.atZone(tz).toOffsetDateTime().toString()
 
-  suspend fun handle(method: String, p: JSONObject): Any = when (method) {
-    "get_phone_status" -> status()
-    "get_steps" -> steps(range(p), p.optString("bucket", "day"))
-    "get_heart_rate" -> heartRate(range(p), p.optString("bucket", "day"))
-    "get_sleep" -> sleep(range(p))
-    "get_exercise_sessions" -> exercise(range(p))
-    "get_weight" -> weight(range(p))
-    "get_nutrition" -> nutrition(range(p))
-    "read_records" -> readGeneric(p)
-    else -> throw NoSuchMethodException(method)
-  }
+  override val methods = mapOf(
+    "get_phone_status" runs { status() },
+    "get_steps" runs { steps(range(it), it.optString("bucket", "day")) },
+    "get_heart_rate" runs { heartRate(range(it), it.optString("bucket", "day")) },
+    "get_sleep" runs { sleep(range(it)) },
+    "get_exercise_sessions" runs { exercise(range(it)) },
+    "get_weight" runs { weight(range(it)) },
+    "get_nutrition" runs { nutrition(range(it)) },
+    "read_records" runs { readGeneric(it) },
+  )
 
   private suspend fun <T : Record> readAll(type: KClass<T>, f: TimeRangeFilter, limit: Int = 5000): List<T> {
     val out = mutableListOf<T>(); var token: String? = null
