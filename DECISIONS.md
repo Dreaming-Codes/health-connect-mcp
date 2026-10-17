@@ -11,9 +11,10 @@ Forks decided without waiting for review, each with its reason. Change any of th
 - **Every reply input is filled with the same `replyText`.** No `reply_key` is exposed.
 
 ## Deploy and test
-- **Production Worker deployed from `notifications`** (2026-10-17 01:52 PDT). Rollback version: `c17bf7ea-d20b-4608-b3ef-0f747aa6cf69`.
+- **Production runs `enrollment`** (version `89974460-f05b-48ab-9a84-0cda3d62c8b0`, 2026-10-17 02:50 PDT, migration v1 to v2). Lorenzo approved the Worker deploy. The existing connector and the 0.3.2 phone still answer `get_phone_status`.
+- **The previous production versions are `0d28f247-a42b-4ab0-9982-a585b0682c7d`** (`notifications`, 01:52 PDT) and `c17bf7ea-d20b-4608-b3ef-0f747aa6cf69` (before PR #2).
 - **The emulator uses a separate Worker** (`health-connect-mcp-e2e`) with its own tokens. Registering the emulator against production would replace the real phone's FCM registration.
-- **Enrollment is not deployed to production.** It adds Durable Object classes (migration v2), and Cloudflare cannot roll a Worker back past a migration. It is live on the e2e Worker only, until Lorenzo OKs it.
+- **A rollback is a new deploy, not a version rollback.** Migration v2 adds Durable Object classes, and Cloudflare refuses to roll a version back past a migration. The rollback deploys the `notifications` code with empty `OwnerHub`, `CodeTicket`, and `Gate` classes. It was rehearsed on the e2e Worker.
 - **No KVM on the box.** The API 35 emulator was too slow under software emulation (system_server ANRs), so the live run uses a lighter API 33 Google APIs image.
 
 ## Enrollment (PR #3)
