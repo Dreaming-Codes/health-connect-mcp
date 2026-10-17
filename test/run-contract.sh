@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-port=${PORT:-8790}
+port=${PORT:-8788}
 state=$(mktemp -d)
 device=contract-test-device-token
 hash=$(printf %s "$device" | sha256sum | cut -d' ' -f1)
