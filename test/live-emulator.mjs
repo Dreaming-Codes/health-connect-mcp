@@ -2,24 +2,56 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { connect } from "./client.mjs";
 
-const { WORKER_URL, MCP_TOKEN, ADB = "adb", SERIAL = "emulator-5554", SCREENS = "dist/screens" } = process.env;
+const { WORKER_URL, ADB = "adb", SERIAL = "emulator-5554", SCREENS = "dist/screens" } = process.env;
 const P = "dev.dreamingcodes.hcmcp";
 const adb = (...a) => execFileSync("timeout", ["180", ADB, "-s", SERIAL, ...a], { encoding: "utf8" }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 mkdirSync(SCREENS, { recursive: true });
 const shot = (name) => writeFileSync(`${SCREENS}/${name}.png`, execFileSync("timeout", ["120", ADB, "-s", SERIAL, "exec-out", "screencap", "-p"]));
+const ui = () => { adb("shell", "uiautomator", "dump", "/sdcard/ui.xml"); return adb("shell", "cat", "/sdcard/ui.xml"); };
 function tapText(text) {
-  adb("shell", "uiautomator", "dump", "/sdcard/ui.xml");
-  const xml = adb("shell", "cat", "/sdcard/ui.xml");
-  const m = xml.match(new RegExp(`(?:text|content-desc)="${text}"[^>]*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`));
+  const m = ui().match(new RegExp(`(?:text|content-desc)="${text}"[^>]*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`));
   if (!m) return false;
   adb("shell", "input", "tap", String((+m[1] + +m[3]) >> 1), String((+m[2] + +m[4]) >> 1));
   return true;
 }
+async function waitFor(re, ms) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(3000)) { const m = ui().match(re); if (m) return m; }
+  return null;
+}
 
 let failures = 0;
 const check = (ok, label, detail) => { console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok || detail === undefined ? "" : "  -> " + JSON.stringify(detail).slice(0, 300)}`); if (!ok) failures++; };
-const c = await connect(WORKER_URL, MCP_TOKEN);
+adb("shell", "input", "keyevent", "WAKEUP"); adb("shell", "wm", "dismiss-keyguard");
+adb("shell", "am", "start", "-W", "-n", `${P}/.MainActivity`);
+await waitFor(/text="Worker URL"/, 120000);
+shot("setup-connect");
+tapText("Worker URL");
+adb("shell", "input", "keycombination", "113", "29"); adb("shell", "input", "keyevent", "DEL");
+adb("shell", "input", "text", WORKER_URL);
+adb("shell", "input", "keyevent", "BACK");
+tapText("Connect");
+const connected = await waitFor(/text="Register with Grok Bot"/, 180000);
+check(!!connected, "setup: URL + Connect enrolls the phone");
+await sleep(5000);
+shot("setup-connected");
+tapText("Register with Grok Bot");
+const codeMatch = await waitFor(/text="([0-9A-Z]{4}-[0-9A-Z]{4})"/, 60000);
+check(!!codeMatch, "Register with Grok Bot shows a claim code", null);
+shot("grok-bot-claim-code");
+tapText("Done");
+const claimed = await fetch(`${WORKER_URL}/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: codeMatch?.[1] }) }).then((r) => r.json());
+check(claimed.headers?.Authorization?.startsWith("Bearer hco_"), "claim code from the app yields a connector", claimed.name);
+adb("shell", "input", "swipe", "360", "1200", "360", "300", "300"); await sleep(3000);
+adb("shell", "input", "swipe", "360", "1200", "360", "300", "300"); await sleep(3000);
+shot("permission-cards");
+for (const perm of ["POST_NOTIFICATIONS", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "ACCESS_BACKGROUND_LOCATION", "READ_SMS", "SEND_SMS", "READ_CONTACTS"])
+  try { adb("shell", "pm", "grant", P, `android.permission.${perm}`); } catch {}
+adb("shell", "cmd", "notification", "allow_listener", `${P}/${P}.NotificationListener`);
+adb("shell", "cmd", "notification", "allow_dnd", P);
+adb("shell", "appops", "set", P, "USE_FULL_SCREEN_INTENT", "allow");
+adb("shell", "input", "keyevent", "HOME"); await sleep(8000);
+const c = await connect(WORKER_URL, claimed.headers.Authorization.slice(7));
 const call = async (name, args = {}) => {
   const t0 = Date.now();
   const r = await c.callTool({ name, arguments: args });
@@ -55,13 +87,14 @@ r = alarm ? await call("dismiss_notification", { key: alarm.key }) : { error: tr
 check(!r.error && r.json.removed, "dismiss_notification stops the alarm", r.text);
 
 const ring = (agent_id, seconds) => call("start_call", { agent_id, caller_name: "Grok Bot", reason: "Your standup starts in 5 minutes", ring_seconds: seconds });
+adb("shell", "input", "keyevent", "SLEEP"); await sleep(3000);
 let pending = ring("live_answer", 40);
 await sleep(12000);
 shot("incoming-call");
 const answered = tapText("Answer");
 r = await pending;
 check(answered && r.json?.outcome === "answered", "start_call answered from the call screen", r.json);
-await sleep(3000); adb("shell", "input", "keyevent", "HOME");
+await sleep(3000); adb("shell", "input", "keyevent", "WAKEUP"); adb("shell", "wm", "dismiss-keyguard"); adb("shell", "input", "keyevent", "HOME");
 
 pending = ring("live_decline", 40);
 await sleep(12000);
@@ -98,6 +131,8 @@ check(r.json?.contacts?.some((x) => x.name === "Ann Example" && x.phones?.length
 r = await call("search_contacts", { query: "5551234" });
 check(r.json?.contacts?.some((x) => x.name === "Ann Example"), "search_contacts by number", r.json);
 
+r = await call("list_devices");
+check(r.json?.devices?.length === 1 && r.json.devices[0].default, "connector sees exactly the emulator", r.json);
 r = await call("get_steps", { start: "2026-10-16", end: "2026-10-17" });
 check(!r.error || !/unknown_method|offline|timed out/.test(r.text), "health tools still answer", r.text);
 await c.close();
