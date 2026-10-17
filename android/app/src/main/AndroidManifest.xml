@@ -30,7 +30,7 @@
     <package android:name="ai.x.grok.bot"/>
     <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent>
   </queries>
-  <application android:label="HC Bridge" android:icon="@android:drawable/ic_menu_compass" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+  <application android:label="Android Connect" android:icon="@android:drawable/ic_menu_compass" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
     <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
       <intent-filter><action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE"/></intent-filter>
@@ -41,7 +41,7 @@
     <service android:name=".PushService" android:exported="false">
       <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
     </service>
-    <service android:name=".NotificationListener" android:exported="false" android:label="HC Bridge" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+    <service android:name=".NotificationListener" android:exported="false" android:label="Android Connect" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
       <intent-filter><action android:name="android.service.notification.NotificationListenerService"/></intent-filter>
     </service>
     <receiver android:name=".BotEventReceiver" android:exported="false"/>

@@ -1,6 +1,6 @@
 export interface ServiceAccount { project_id: string; client_email: string; private_key: string; token_uri?: string }
 
-const b64url = (b: ArrayBuffer | Uint8Array | string) => {
+export const b64url = (b: ArrayBuffer | Uint8Array | string) => {
   const bytes = typeof b === "string" ? new TextEncoder().encode(b) : new Uint8Array(b as ArrayBuffer);
   let s = ""; for (const x of bytes) s += String.fromCharCode(x);
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

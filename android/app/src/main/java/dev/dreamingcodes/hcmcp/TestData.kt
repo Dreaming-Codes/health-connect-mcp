@@ -7,7 +7,6 @@ import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
 import java.time.*
 
-/** Deterministic fake records for emulator testing (debug builds only; release lacks WRITE permissions). */
 object TestData {
   private val tz = ZoneId.of("Europe/Amsterdam")
   private fun t(d: String, hm: String) = LocalDateTime.parse("${d}T$hm").atZone(tz)
