@@ -28,8 +28,10 @@ export async function mintAccessToken(sa: ServiceAccount): Promise<{ token: stri
 
 export class FcmError extends Error { constructor(msg: string, public status: number, public code?: string) { super(msg); } }
 
-export async function sendData(sa: ServiceAccount, accessToken: string, fcmToken: string, data: Record<string, string>, ttlSec: number) {
-  const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
+export const FCM_ENDPOINT = "https://fcm.googleapis.com";
+
+export async function sendData(sa: ServiceAccount, accessToken: string, fcmToken: string, data: Record<string, string>, ttlSec: number, endpoint = FCM_ENDPOINT) {
+  const res = await fetch(`${endpoint}/v1/projects/${sa.project_id}/messages:send`, {
     method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ message: { token: fcmToken, data, android: { priority: "high", ttl: `${ttlSec}s` } } }),
   });

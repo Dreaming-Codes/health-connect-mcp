@@ -87,6 +87,7 @@ class HealthHandler(private val ctx: Context) {
     val sdk = HealthConnectClient.getSdkStatus(ctx)
     val o = JSONObject().put("app_version", BuildConfig.VERSION_NAME).put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
       .put("android_sdk", Build.VERSION.SDK_INT).put("battery", level)
+      .put("capabilities", Capabilities.json(ctx))
       .put("health_connect", when (sdk) { HealthConnectClient.SDK_AVAILABLE -> "available"; HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "update_required"; else -> "unavailable" })
     if (sdk == HealthConnectClient.SDK_AVAILABLE) {
       val granted = client.permissionController.getGrantedPermissions()
