@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { connect } from "./client.mjs";
 
-const { WORKER_URL, ADB = "adb", SERIAL = "emulator-5554", SCREENS = "dist/screens" } = process.env;
+const { WORKER_URL, APP_VERSION, ADB = "adb", SERIAL = "emulator-5554", SCREENS = "dist/screens" } = process.env;
 const P = "dev.dreamingcodes.hcmcp";
 const adb = (...a) => execFileSync("timeout", ["180", ADB, "-s", SERIAL, ...a], { encoding: "utf8" }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 mkdirSync(SCREENS, { recursive: true });
 const shot = (name) => writeFileSync(`${SCREENS}/${name}.png`, execFileSync("timeout", ["120", ADB, "-s", SERIAL, "exec-out", "screencap", "-p"]));
-const ui = () => { adb("shell", "uiautomator", "dump", "/sdcard/ui.xml"); return adb("shell", "cat", "/sdcard/ui.xml"); };
+const ui = () => { try { adb("shell", "uiautomator", "dump", "/data/local/tmp/ui.xml"); return adb("shell", "cat", "/data/local/tmp/ui.xml"); } catch { return ""; } };
 function tapText(text) {
   const m = ui().match(new RegExp(`(?:text|content-desc)="${text}"[^>]*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`));
   if (!m) return false;
@@ -22,6 +22,21 @@ async function waitFor(re, ms) {
 
 let failures = 0;
 const check = (ok, label, detail) => { console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok || detail === undefined ? "" : "  -> " + JSON.stringify(detail).slice(0, 300)}`); if (!ok) failures++; };
+function seedContact(name, phone) {
+  adb("shell", "content", "insert", "--uri", "content://com.android.contacts/raw_contacts", "--bind", "account_type:n:", "--bind", "account_name:n:");
+  const id = adb("shell", "content", "query", "--uri", "content://com.android.contacts/raw_contacts", "--projection", "_id").match(/_id=(\d+)\s*$/)[1];
+  const data = (mime, ...binds) => adb("shell", "content", "insert", "--uri", "content://com.android.contacts/data", "--bind", `raw_contact_id:i:${id}`, "--bind", `mimetype:s:${mime}`, ...binds.flatMap((b) => ["--bind", b]));
+  data("vnd.android.cursor.item/name", `data1:s:'${name}'`);
+  data("vnd.android.cursor.item/phone_v2", `data1:s:${phone}`, "data2:i:2");
+}
+async function contactsReady() {
+  for (const end = Date.now() + 300000; Date.now() < end; await sleep(5000)) {
+    const out = adb("shell", "content query --uri content://com.android.contacts/data/phones --projection display_name 2>&1");
+    if (!out.includes("Could not find provider")) return out;
+  }
+  throw new Error("contacts provider did not start");
+}
+if (!(await contactsReady()).includes("Ann Example")) seedContact("Ann Example", "5551234");
 adb("shell", "input", "keyevent", "WAKEUP"); adb("shell", "wm", "dismiss-keyguard");
 adb("shell", "am", "start", "-W", "-n", `${P}/.MainActivity`);
 await waitFor(/text="Worker URL"/, 120000);
@@ -62,7 +77,7 @@ const call = async (name, args = {}) => {
 const byTitle = async (title) => (await call("list_notifications", { package: P, limit: 50 })).json?.notifications?.find((n) => n.title === title);
 
 let r = await call("get_phone_status");
-check(r.json?.phone?.app_version?.startsWith("0.4.0"), `get_phone_status over real FCM (${r.ms} ms)`, r.json);
+check(r.json?.phone?.app_version === APP_VERSION, `get_phone_status over real FCM (${r.ms} ms)`, r.json);
 check(r.json?.phone?.capabilities?.notification_access === true, "capabilities report notification access", r.json?.phone?.capabilities);
 
 r = await call("send_notification", { title: "Live test", text: "Pick one", importance: "high", actions: [{ id: "yes", label: "Yes" }, { id: "say", label: "Say", reply: { placeholder: "Type" } }] });
@@ -82,6 +97,7 @@ check(r.json?.responses?.[0]?.action_id === "say" && r.json.responses[0].reply_t
 r = await call("send_notification", { title: "Live alarm", alarm: true, vibrate: false });
 check(!r.error && r.json.channel_id.startsWith("bot_alarm") && typeof r.json.alarm_volume === "number", "alarm notification reports volume", r.json);
 await sleep(2000);
+adb("shell", "cmd", "statusbar", "expand-notifications"); await sleep(3000); shot("alarm-notification"); adb("shell", "cmd", "statusbar", "collapse");
 const alarm = await byTitle("Live alarm");
 r = alarm ? await call("dismiss_notification", { key: alarm.key }) : { error: true, text: "alarm not listed" };
 check(!r.error && r.json.removed, "dismiss_notification stops the alarm", r.text);
