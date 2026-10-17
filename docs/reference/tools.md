@@ -1,6 +1,6 @@
 # MCP tool reference
 
-The Worker exposes 21 tools on `/mcp`. Every tool returns one text content item that holds JSON. A failed call returns `isError: true` with the error message as text.
+The Worker exposes 20 tools on `/mcp`. Every tool returns one text content item that holds JSON. A failed call returns `isError: true` with the error message as text.
 
 This file is generated from the live tool list. To regenerate it, run `npm run docs:tools`.
 
@@ -11,7 +11,6 @@ Dismiss one notification, as if the user swiped it away. Ongoing or non-clearabl
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `key` | string | yes |  | Notification key from list_notifications |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_exercise_sessions`
 
@@ -22,7 +21,6 @@ Exercise/workout sessions (type, duration, calories, distance, avg HR).
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_heart_rate`
 
@@ -34,7 +32,6 @@ Heart rate: min/avg/max per bucket, plus resting HR when available.
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
 | `bucket` | `none`, `hour`, `day` | no | `"day"` | Aggregation bucket |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_location`
 
@@ -44,7 +41,6 @@ The phone's current location (GPS/network fix), or the last known fix if a fresh
 |---|---|---|---|---|
 | `max_age_s` | integer, ≥ 0, ≤ 86400 | no | `120` | Accept a cached fix up to this old instead of waiting for a new one |
 | `timeout_s` | integer, ≥ 1, ≤ 12 | no | `10` |  |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_notification_responses`
 
@@ -56,7 +52,6 @@ Taps, button presses and replies on notifications sent with send_notification, o
 | `since` | string | no |  |  |
 | `wait_seconds` | integer, ≥ 0, ≤ 20 | no | `0` |  |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_nutrition`
 
@@ -67,15 +62,12 @@ Nutrition entries and per-day totals (energy, macros).
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_phone_status`
 
 Whether the phone is connected, last-seen time, app/permission info.
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
+No parameters.
 
 ## `get_sleep`
 
@@ -86,7 +78,6 @@ Sleep sessions with stages and durations overlapping the range.
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_steps`
 
@@ -98,7 +89,6 @@ Step counts from Health Connect, aggregated per bucket (live from the phone).
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
 | `bucket` | `none`, `hour`, `day` | no | `"day"` | Aggregation bucket |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `get_weight`
 
@@ -109,13 +99,6 @@ Weight measurements (kg) in the range.
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
-
-## `list_devices`
-
-Phones this connector can reach. Pass a device_id or name as `device` to any tool; the default is the most recently seen device.
-
-No parameters.
 
 ## `list_messages`
 
@@ -130,7 +113,6 @@ SMS and MMS messages, newest first. Contact names are added when contacts permis
 | `box` | `all`, `inbox`, `sent` | no | `"all"` |  |
 | `limit` | integer, ≥ 1, ≤ 500 | no | `50` |  |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `list_notifications`
 
@@ -142,7 +124,6 @@ Active notifications on the phone, newest first: app, title, text, and the actio
 | `since` | string | no |  | Only notifications posted at or after this time, same formats as start |
 | `limit` | integer, ≥ 1, ≤ 200 | no | `50` |  |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `list_threads`
 
@@ -152,7 +133,6 @@ SMS/MMS conversations, newest first, with the other party's address and the last
 |---|---|---|---|---|
 | `limit` | integer, ≥ 1, ≤ 100 | no | `20` |  |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `perform_notification_action`
 
@@ -163,7 +143,6 @@ Tap a notification's action button by index, or its body with action "content". 
 | `key` | string | yes |  | Notification key from list_notifications |
 | `action` | integer, ≥ 0, ≤ 9007199254740991 or `"content"` | yes |  | Action index from list_notifications, or "content" to tap the notification itself |
 | `replyText` | string, ≤ 4000 chars | no |  | Reply text, required for and only allowed with a reply action |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `read_records`
 
@@ -176,7 +155,6 @@ Generic raw read of any Health Connect record type in a time range.
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
 | `limit` | integer, ≥ 1, ≤ 1000 | no | `200` |  |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `reply_to_thread`
 
@@ -186,7 +164,6 @@ Send an SMS to the other party of a one-to-one thread from list_threads. Group t
 |---|---|---|---|---|
 | `thread_id` | integer, ≥ 1, ≤ 9007199254740991 | yes |  |  |
 | `text` | string, ≤ 5000 chars | yes |  | Message text; long text is sent as a multipart SMS |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `search_contacts`
 
@@ -196,7 +173,6 @@ Find contacts by name or phone number. Returns names, phone numbers with their t
 |---|---|---|---|---|
 | `query` | string, ≤ 100 chars | yes |  |  |
 | `limit` | integer, ≥ 1, ≤ 50 | no | `10` |  |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `send_message`
 
@@ -206,7 +182,6 @@ Send an SMS from the phone's default SIM and report whether it was sent and deli
 |---|---|---|---|---|
 | `to` | string | yes |  |  |
 | `text` | string, ≤ 5000 chars | yes |  | Message text; long text is sent as a multipart SMS |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `send_notification`
 
@@ -228,7 +203,6 @@ Show a notification on the phone from the assistant, optionally with buttons and
 | `actions[].label` | string, ≤ 40 chars | yes |  |  |
 | `actions[].reply` | object | no |  | Make this a text reply action |
 | `actions[].reply.placeholder` | string, ≤ 60 chars | no |  |  |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |
 
 ## `start_call`
 
@@ -240,4 +214,3 @@ Ring the phone like an incoming call from the assistant, with a full-screen call
 | `caller_name` | string, ≤ 60 chars | no | `"Grok Bot"` |  |
 | `reason` | string, ≤ 140 chars | yes |  | Why you are calling, shown under the caller name |
 | `ring_seconds` | integer, ≥ 5, ≤ 60 | no | `30` |  |
-| `device` | string, ≤ 64 chars | no |  | Device id or name from list_devices; default is the most recently seen device |

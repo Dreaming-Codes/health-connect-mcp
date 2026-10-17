@@ -1,16 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { b64url } from "./fcm";
 
-export const LEGACY_OWNER = "0000000000000000";
-export const LEGACY_DEVICE = "phone";
 export const CODE_TTL_MS = 10 * 60_000;
 
-type TokenKind = "device" | "owner";
+export type TokenKind = "device" | "connector";
 type ParsedToken = { kind: TokenKind; id: string; secret: string };
-export type Ticket = { kind: "pair" | "claim"; owner_id: string; device_id: string; expires: number };
-type ConnectorToken = { hash: string; label: string; created: number };
+export type Ticket = { device_id: string; expires: number };
 
-const PREFIX: Record<TokenKind, string> = { device: "hcd", owner: "hco" };
+const PREFIX: Record<TokenKind, string> = { device: "hcd", connector: "hco" };
 const TOKEN_RE = /^hc([do])_([0-9a-f]{16})_([A-Za-z0-9_-]{43})$/;
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -33,7 +30,7 @@ export const newId = () => hex(random(8));
 
 export function parseToken(t: string): ParsedToken | null {
   const m = TOKEN_RE.exec(t);
-  return m ? { kind: m[1] === "d" ? "device" : "owner", id: m[2], secret: m[3] } : null;
+  return m ? { kind: m[1] === "d" ? "device" : "connector", id: m[2], secret: m[3] } : null;
 }
 
 export async function mintToken(kind: TokenKind, id: string): Promise<{ token: string; hash: string }> {
@@ -51,36 +48,15 @@ export function normalizeCode(raw: string): string | null {
   return /^[0-9A-HJKMNP-TV-Z]{8}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4)}` : null;
 }
 
-export class OwnerHub extends DurableObject {
-  async addDevice(deviceId: string): Promise<void> {
-    const devices = await this.devices();
-    if (!devices.includes(deviceId)) await this.ctx.storage.put("devices", [...devices, deviceId]);
-  }
-
-  async devices(): Promise<string[]> {
-    return (await this.ctx.storage.get<string[]>("devices")) ?? [];
-  }
-
-  async addToken(hash: string, label: string): Promise<void> {
-    const tokens = (await this.ctx.storage.get<ConnectorToken[]>("tokens")) ?? [];
-    await this.ctx.storage.put("tokens", [...tokens, { hash, label, created: Date.now() }]);
-  }
-
-  async verify(hash: string): Promise<boolean> {
-    const tokens = (await this.ctx.storage.get<ConnectorToken[]>("tokens")) ?? [];
-    return tokens.some((t) => safeEqual(t.hash, hash));
-  }
-}
-
 export class CodeTicket extends DurableObject {
   async put(t: Ticket): Promise<void> {
     await this.ctx.storage.put("ticket", t);
     await this.ctx.storage.setAlarm(t.expires);
   }
 
-  async take(kind: Ticket["kind"]): Promise<Ticket | null> {
+  async take(): Promise<Ticket | null> {
     const t = await this.ctx.storage.get<Ticket>("ticket");
-    if (!t || t.kind !== kind) return null;
+    if (!t) return null;
     await this.ctx.storage.deleteAll();
     return t.expires > Date.now() ? t : null;
   }

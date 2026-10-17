@@ -19,9 +19,7 @@ object Settings {
   private fun plain(ctx: Context) = ctx.getSharedPreferences("bridge_meta", Context.MODE_PRIVATE)
   fun workerUrl(ctx: Context) = prefs(ctx).getString("worker_url", "") ?: ""
   fun deviceToken(ctx: Context) = prefs(ctx).getString("device_token", "") ?: ""
-  fun isConfigured(ctx: Context) = workerUrl(ctx).isNotBlank() && deviceToken(ctx).isNotBlank()
-  fun save(ctx: Context, url: String, token: String) =
-    prefs(ctx).edit().putString("worker_url", url.trim().trimEnd('/')).putString("device_token", token.trim()).commit()
+  fun isConfigured(ctx: Context) = workerUrl(ctx).isNotBlank() && deviceToken(ctx).isNotBlank() && deviceId(ctx).isNotBlank()
   fun deviceId(ctx: Context) = prefs(ctx).getString("device_id", "") ?: ""
   fun deviceName(ctx: Context) = prefs(ctx).getString("device_name", "") ?: ""
   fun saveEnrollment(ctx: Context, url: String, e: Enrollment, name: String) = prefs(ctx).edit()

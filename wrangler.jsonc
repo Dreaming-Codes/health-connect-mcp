@@ -5,13 +5,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": { "bindings": [
     { "name": "PHONE", "class_name": "PhoneHub" },
-    { "name": "OWNER", "class_name": "OwnerHub" },
     { "name": "TICKET", "class_name": "CodeTicket" },
     { "name": "GATE", "class_name": "Gate" }
   ] },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["PhoneHub"] },
-    { "tag": "v2", "new_sqlite_classes": ["OwnerHub", "CodeTicket", "Gate"] }
+    { "tag": "v2", "new_sqlite_classes": ["OwnerHub", "CodeTicket", "Gate"] },
+    { "tag": "v3", "deleted_classes": ["OwnerHub"] }
   ],
   "observability": { "enabled": true }
 }

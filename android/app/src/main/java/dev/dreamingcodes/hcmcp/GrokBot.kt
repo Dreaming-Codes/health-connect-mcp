@@ -10,7 +10,7 @@ object GrokBot {
   private const val PACKAGE = "ai.x.grok.bot"
 
   fun connectorMessage(c: IssuedCode, deviceName: String): String {
-    val claim = c.claimUrl ?: ""
+    val claim = c.claimUrl
     return """
       Please add an MCP connector for my Android phone "$deviceName".
       Claim it once with POST $claim and JSON body {"code":"${c.code}"} (or GET $claim?code=${c.code}).

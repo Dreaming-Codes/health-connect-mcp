@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import { safeEqual } from "./access";
+import { safeEqual, type TokenKind } from "./access";
 import type { Env } from "./env";
 import { FcmError, mintAccessToken, sendData, type ServiceAccount } from "./fcm";
 
@@ -40,7 +40,8 @@ export function parsePhoneReply(body: Record<string, any>): PhoneReply {
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; sentAt: number };
 type OAuthToken = { token: string; expiresAt: number };
-type DeviceAuth = { token_hash: string; owner_id: string };
+type DeviceAuth = { token_hash: string };
+type ConnectorToken = { hash: string; label: string; created: number };
 type DeviceInfo = { app_version?: string; device?: string; mode?: string; ts: number };
 type PhoneStatus = {
   name?: string;
@@ -107,18 +108,23 @@ export class PhoneHub extends DurableObject<Env> {
     return next;
   }
 
-  async enroll(a: DeviceAuth, name: string): Promise<void> {
-    await this.ctx.storage.put("auth", a);
+  async enroll(tokenHash: string, name: string): Promise<void> {
+    await this.ctx.storage.put("auth", { token_hash: tokenHash } satisfies DeviceAuth);
     await this.ctx.storage.put("name", name);
   }
 
-  async verify(hash: string): Promise<boolean> {
-    const a = await this.ctx.storage.get<DeviceAuth>("auth");
-    return !!a && safeEqual(a.token_hash, hash);
+  async addConnector(hash: string, label: string): Promise<void> {
+    const tokens = (await this.ctx.storage.get<ConnectorToken[]>("connectors")) ?? [];
+    await this.ctx.storage.put("connectors", [...tokens, { hash, label, created: Date.now() }]);
   }
 
-  async ownerId(): Promise<string | undefined> {
-    return (await this.ctx.storage.get<DeviceAuth>("auth"))?.owner_id;
+  async authorize(kind: TokenKind, hash: string): Promise<boolean> {
+    if (kind === "device") {
+      const a = await this.ctx.storage.get<DeviceAuth>("auth");
+      return !!a && safeEqual(a.token_hash, hash);
+    }
+    const tokens = (await this.ctx.storage.get<ConnectorToken[]>("connectors")) ?? [];
+    return tokens.some((t) => safeEqual(t.hash, hash));
   }
 
   async setName(name: string): Promise<void> {
@@ -139,25 +145,6 @@ export class PhoneHub extends DurableObject<Env> {
     this.oauth = await mintAccessToken(sa);
     await this.ctx.storage.put("oauth", this.oauth);
     return this.oauth.token;
-  }
-
-  async fcmSelfTest(fakeToken: string): Promise<Record<string, unknown>> {
-    const sa = this.serviceAccount();
-    if (!sa) return { ok: false, error: "FCM_SERVICE_ACCOUNT not configured" };
-    const out: Record<string, unknown> = {};
-    try {
-      const t = await this.accessToken(sa);
-      out.oauth = `ok (${t.length} chars, expires ${new Date(this.oauth!.expiresAt).toISOString()})`;
-    } catch (e: any) {
-      return { ok: false, oauth: String(e.message) };
-    }
-    try {
-      out.send = await sendData(sa, this.oauth!.token, fakeToken, { type: "selftest" }, 10, this.env.FCM_ENDPOINT);
-    } catch (e: any) {
-      out.send_error = String(e.message);
-      out.code = e.code;
-    }
-    return out;
   }
 
   private serviceAccount(): ServiceAccount | undefined {

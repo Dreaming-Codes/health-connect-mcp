@@ -1,7 +1,7 @@
-import { connect } from "../test/client.mjs";
+import { claimConnector, connect, enroll } from "../test/client.mjs";
 
-const [base, mcpToken] = process.argv.slice(2);
-const c = await connect(base, mcpToken);
+const [base] = process.argv.slice(2);
+const c = await connect(base, (await claimConnector(base, (await enroll(base, "Docs phone")).body.device_token)).token);
 const { tools } = await c.listTools();
 await c.close();
 
