@@ -1,6 +1,5 @@
 package dev.dreamingcodes.hcmcp
 
-import android.Manifest
 import android.content.Context
 import android.net.Uri
 import android.provider.ContactsContract.CommonDataKinds.Email
@@ -11,16 +10,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class ContactsHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("search_contacts")
+  override val methods = mapOf("search_contacts" runs ::search)
   private val cr = ctx.contentResolver
 
   companion object {
     private val NUMBER_LIKE = Regex("^\\+?[0-9 ()-]{3,}$")
-    fun granted(ctx: Context) = ctx.has(Manifest.permission.READ_CONTACTS)
   }
 
-  override suspend fun handle(method: String, p: JSONObject): Any {
-    if (!granted(ctx)) throw PhoneFailure("contacts_permission_missing", "contacts permission is not granted; open the app and tap Allow contacts")
+  private suspend fun search(p: JSONObject): JSONObject {
+    Requirement.Contacts.check(ctx)
     val query = p.optString("query").trim().ifEmpty { throw BadParams("query required") }
     val limit = p.optInt("limit", 10).coerceIn(1, 50)
     val matches = if (NUMBER_LIKE.matches(query)) lookup(PhoneLookup.CONTENT_FILTER_URI, query, PhoneLookup._ID, PhoneLookup.DISPLAY_NAME)
@@ -45,7 +43,7 @@ class ContactsHandler(private val ctx: Context) : MethodGroup {
 }
 
 class ContactNames(private val ctx: Context) {
-  private val enabled = ContactsHandler.granted(ctx)
+  private val enabled = Requirement.Contacts.met(ctx)
   private val cache = HashMap<String, String?>()
 
   fun nameFor(address: String?): String? {

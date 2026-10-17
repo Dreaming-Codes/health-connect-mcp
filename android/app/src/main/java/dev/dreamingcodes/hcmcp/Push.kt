@@ -8,6 +8,7 @@ import com.google.android.gms.tasks.Tasks
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
@@ -33,7 +34,14 @@ data class IssuedCode(val code: String, val expiresAt: String, val claimUrl: Str
   }
 }
 
-class PhoneFailure(val code: String, message: String) : Exception(message)
+open class PhoneFailure(val code: String, message: String) : Exception(message)
+
+class BadParams(message: String) : PhoneFailure("bad_params", message)
+
+fun errorJson(e: Throwable): JSONObject {
+  val code = when (e) { is PhoneFailure -> e.code; is SecurityException -> "permission_denied"; is TimeoutCancellationException -> "timeout"; else -> "internal" }
+  return JSONObject().put("code", code).put("message", e.message ?: e.javaClass.simpleName)
+}
 
 object WorkerApi {
   private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).writeTimeout(8, TimeUnit.SECONDS).build()
@@ -50,24 +58,21 @@ object WorkerApi {
     http.newCall(req).execute().use { return it.code to (it.body?.string() ?: "") }
   }
 
-  private fun errorOf(code: Int, body: String) = runCatching { JSONObject(body).getString("error") }.getOrNull() ?: "HTTP $code"
+  private fun Pair<Int, String>.okJson(): JSONObject {
+    val (code, text) = this
+    if (code != 200) throw IllegalStateException(runCatching { JSONObject(text).getString("error") }.getOrNull() ?: "HTTP $code")
+    return JSONObject(text)
+  }
 
   fun enroll(url: String, name: String, pairingCode: String?): Enrollment {
     val body = JSONObject().put("name", name).apply { pairingCode?.let { put("pairing_code", it) } }
-    val (code, text) = send(url, "/enroll", body, null)
-    if (code != 200) throw IllegalStateException(errorOf(code, text))
-    return Enrollment.parse(JSONObject(text))
+    return Enrollment.parse(send(url, "/enroll", body, null).okJson())
   }
 
-  fun code(ctx: Context, kind: CodeKind): IssuedCode {
-    val (code, text) = post(ctx, kind.path, JSONObject())
-    if (code != 200) throw IllegalStateException(errorOf(code, text))
-    return IssuedCode.parse(JSONObject(text))
-  }
+  fun code(ctx: Context, kind: CodeKind) = IssuedCode.parse(post(ctx, kind.path, JSONObject()).okJson())
 
   fun rename(ctx: Context, name: String) {
-    val (code, text) = post(ctx, "/phone/name", JSONObject().put("name", name))
-    if (code != 200) throw IllegalStateException(errorOf(code, text))
+    post(ctx, "/phone/name", JSONObject().put("name", name)).okJson()
   }
 
   @WorkerThread
@@ -88,8 +93,9 @@ object WorkerApi {
 }
 
 suspend fun dispatch(ctx: Context, method: String, params: JSONObject): Any {
-  val groups = listOf(NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), LocationHandler(ctx), MessagesHandler(ctx), ContactsHandler(ctx))
-  return groups.firstOrNull { method in it.methods }?.handle(method, params) ?: HealthHandler(ctx).handle(method, params)
+  val groups = listOf(HealthHandler(ctx), NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), LocationHandler(ctx), MessagesHandler(ctx), ContactsHandler(ctx))
+  val run = groups.firstNotNullOfOrNull { it.methods[method] } ?: throw PhoneFailure("unknown_method", method)
+  return run(params)
 }
 
 class PushService : FirebaseMessagingService() {
@@ -107,9 +113,7 @@ class PushService : FirebaseMessagingService() {
       try {
         withTimeout(15_000) { reply.put("result", dispatch(this@PushService, method, JSONObject(d["params"] ?: "{}"))) }
       } catch (e: Throwable) {
-        val code = when (e) { is PhoneFailure -> e.code; is SecurityException -> "permission_denied"; is BadParams -> "bad_params"; is NoSuchMethodException -> "unknown_method"
-          is kotlinx.coroutines.TimeoutCancellationException -> "timeout"; else -> "internal" }
-        reply.put("error", JSONObject().put("code", code).put("message", e.message ?: e.javaClass.simpleName))
+        reply.put("error", errorJson(e))
       }
     }
     try {

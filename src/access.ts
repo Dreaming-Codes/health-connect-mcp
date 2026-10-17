@@ -5,10 +5,10 @@ export const LEGACY_OWNER = "0000000000000000";
 export const LEGACY_DEVICE = "phone";
 export const CODE_TTL_MS = 10 * 60_000;
 
-export type TokenKind = "device" | "owner";
-export type ParsedToken = { kind: TokenKind; id: string; secret: string };
+type TokenKind = "device" | "owner";
+type ParsedToken = { kind: TokenKind; id: string; secret: string };
 export type Ticket = { kind: "pair" | "claim"; owner_id: string; device_id: string; expires: number };
-export type ConnectorToken = { hash: string; label: string; created: number };
+type ConnectorToken = { hash: string; label: string; created: number };
 
 const PREFIX: Record<TokenKind, string> = { device: "hcd", owner: "hco" };
 const TOKEN_RE = /^hc([do])_([0-9a-f]{16})_([A-Za-z0-9_-]{43})$/;

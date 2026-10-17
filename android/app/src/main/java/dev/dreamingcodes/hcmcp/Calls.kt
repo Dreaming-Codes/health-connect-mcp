@@ -7,12 +7,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Person
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -63,7 +61,6 @@ object Calls {
   const val CHANNEL = "bot_call"
   const val NOTIFICATION_ID = 7200
   const val ACTION_ANSWER = "dev.dreamingcodes.hcmcp.CALL_ANSWER"
-  private const val GROK_BOT = "ai.x.grok.bot"
 
   fun canFullScreen(ctx: Context) = Build.VERSION.SDK_INT < 34 || ctx.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
 
@@ -76,30 +73,18 @@ object Calls {
     })
   }
 
-  fun grokBotIntents(ctx: Context, agentId: String): List<Intent> = buildList {
-    add(Intent(Intent.ACTION_VIEW, Uri.parse("grokbot://app/v1/voice-call?id=$agentId")).setPackage(GROK_BOT))
-    add(Intent(Intent.ACTION_VIEW, Uri.parse("grokbot://app/v1/agent?id=$agentId")).setPackage(GROK_BOT))
-    ctx.packageManager.getLaunchIntentForPackage(GROK_BOT)?.let { add(it) }
-    add(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(ComponentName(GROK_BOT, "$GROK_BOT.MainActivity")))
-  }
-
-  fun launchGrokBot(ctx: Context, agentId: String): String? = grokBotIntents(ctx, agentId).firstNotNullOfOrNull { i ->
-    if (i.resolveActivity(ctx.packageManager) == null) null
-    else runCatching { ctx.startActivity(Intent(i).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)); i.data?.path ?: "launcher" }.getOrNull()
-  }
-
-  fun end(ctx: Context, call: IncomingCall, outcome: String) {
+  fun end(ctx: Context, call: IncomingCall, outcome: String, done: () -> Unit = {}) {
     ctx.getSystemService(NotificationManager::class.java).cancel(call.id, NOTIFICATION_ID)
-    BotEvents.post(ctx, call.id, outcome)
+    BotEvents.post(ctx, call.id, outcome, done = done)
   }
 }
 
 class CallHandler(private val ctx: Context) : MethodGroup {
-  override val methods = setOf("start_call")
+  override val methods = mapOf("start_call" runs ::ring)
   private val nm = ctx.getSystemService(NotificationManager::class.java)
 
-  override suspend fun handle(method: String, p: JSONObject): Any {
-    if (!Capabilities.canPostNotifications(ctx)) throw PhoneFailure("notifications_permission_missing", "the app may not post notifications; open the app and tap Allow notifications")
+  private fun ring(p: JSONObject): JSONObject {
+    Requirement.PostNotifications.check(ctx)
     val now = System.currentTimeMillis()
     val call = IncomingCall.parse(p, now)
     Calls.channel(nm)
@@ -116,7 +101,7 @@ class CallHandler(private val ctx: Context) : MethodGroup {
     val n = b.build().apply { flags = flags or Notification.FLAG_INSISTENT }
     nm.notify(call.id, Calls.NOTIFICATION_ID, n)
     return JSONObject().put("call_id", call.id).put("ringing", true).put("full_screen", Calls.canFullScreen(ctx))
-      .put("grok_bot_installed", Calls.grokBotIntents(ctx, call.agentId).any { it.resolveActivity(ctx.packageManager) != null })
+      .put("grok_bot_installed", GrokBot.voiceCallIntents(ctx, call.agentId).any { it.resolveActivity(ctx.packageManager) != null })
   }
 }
 
@@ -124,8 +109,7 @@ class CallDeclineReceiver : BroadcastReceiver() {
   override fun onReceive(ctx: Context, intent: Intent) {
     val call = IncomingCall.from(intent) ?: return
     val pending = goAsync()
-    ctx.getSystemService(NotificationManager::class.java).cancel(call.id, Calls.NOTIFICATION_ID)
-    BotEvents.post(ctx, call.id, "declined") { pending.finish() }
+    Calls.end(ctx, call, "declined") { pending.finish() }
   }
 }
 
@@ -176,7 +160,7 @@ class IncomingCallActivity : ComponentActivity() {
   }
 
   private fun handOff(c: IncomingCall) {
-    if (Calls.launchGrokBot(this, c.agentId) == null) status = "Grok Bot is not installed" else finish()
+    if (GrokBot.startVoiceCall(this, c.agentId) == null) status = "Grok Bot is not installed" else finish()
   }
 
   private fun decline() {

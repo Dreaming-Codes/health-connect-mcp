@@ -29,7 +29,7 @@ class DebugNotificationReceiver : BroadcastReceiver() {
       val out = try {
         JSONObject().put("result", runBlocking { dispatch(ctx, method, JSONObject(params)) })
       } catch (e: Throwable) {
-        JSONObject().put("error", JSONObject().put("code", (e as? PhoneFailure)?.code ?: e.javaClass.simpleName).put("message", e.message))
+        JSONObject().put("error", errorJson(e))
       }
       File(ctx.filesDir, "debug_result.json").writeText(out.toString(1))
       pending.finish()

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DEFAULT_TZ = "Europe/Amsterdam";
+const DEFAULT_TZ = "Europe/Amsterdam";
 
 const HAS_OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i;
 const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
@@ -13,7 +13,7 @@ function tzOffsetMs(ms: number, tz: string): number {
 const offsetAtWallTime = (wall: number, tz: string) => tzOffsetMs(wall - tzOffsetMs(wall, tz), tz);
 const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
 
-export function normalizeTime(s: string, tz: string): string {
+function normalizeTime(s: string, tz: string): string {
   s = s.trim();
   if (HAS_OFFSET.test(s)) {
     if (Number.isNaN(Date.parse(s))) throw new Error(`invalid date-time: ${s}`);
@@ -41,17 +41,20 @@ export const range = {
 };
 export const bucket = z.enum(["none", "hour", "day"]).default("day").describe("Aggregation bucket");
 
-export type RangeArgs = { start: string; end: string; timezone?: string; [k: string]: unknown };
-
-export function zoneOf(args: { timezone?: string }): string {
+function zoneOf(args: { timezone?: string }): string {
   const tz = args.timezone ?? DEFAULT_TZ;
   if (!validTz(tz)) throw new Error(`invalid timezone: ${tz}`);
   return tz;
 }
 
-export function normalizeRange(args: RangeArgs): RangeArgs {
+export function inZone<A extends { timezone?: string }>(args: A, ...keys: (keyof A & string)[]): A & { timezone: string } {
   const tz = zoneOf(args);
-  const out = { ...args, timezone: tz, start: normalizeTime(args.start, tz), end: normalizeTime(args.end, tz) };
-  if (Date.parse(out.end) <= Date.parse(out.start)) throw new Error("end must be after start");
+  const out: A & { timezone: string } = { ...args, timezone: tz };
+  for (const k of keys) {
+    const v = args[k];
+    if (typeof v === "string") Object.assign(out, { [k]: normalizeTime(v, tz) });
+  }
+  const [from, to] = keys.map((k) => out[k]);
+  if (typeof from === "string" && typeof to === "string" && Date.parse(to) <= Date.parse(from)) throw new Error(`${keys[1]} must be after ${keys[0]}`);
   return out;
 }
