@@ -3,9 +3,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { FcmError, mintAccessToken, sendData, type ServiceAccount } from "./fcm";
+import { CODE_TTL_MS, CodeTicket, Gate, LEGACY_DEVICE, LEGACY_OWNER, OwnerHub, mintToken, newCode, newId, normalizeCode, parseToken, safeEqual, sha256Hex } from "./access";
+
+export { CodeTicket, Gate, OwnerHub };
 
 export interface Env {
   PHONE: DurableObjectNamespace<PhoneHub>;
+  OWNER: DurableObjectNamespace<OwnerHub>;
+  TICKET: DurableObjectNamespace<CodeTicket>;
+  GATE: DurableObjectNamespace<Gate>;
   DEVICE_TOKEN_HASH: string;
   MCP_TOKEN: string;
   PUSH_TIMEOUT_MS?: string;
@@ -21,35 +27,37 @@ const json = (o: unknown, status = 200, headers: Record<string, string> = {}) =>
 const unauthorized = () => json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
 const isoOrNull = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
-async function sha256Hex(s: string): Promise<string> {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ea = new TextEncoder().encode(a), eb = new TextEncoder().encode(b);
-  if (ea.length !== eb.length) return false;
-  let r = 0;
-  for (let i = 0; i < ea.length; i++) r |= ea[i] ^ eb[i];
-  return r === 0;
-}
-
 function bearer(req: Request): string | null {
   const m = /^Bearer\s+(.+)$/i.exec(req.headers.get("Authorization") ?? "");
   return m ? m[1].trim() : null;
 }
 
-async function isDevice(req: Request, env: Env): Promise<boolean> {
+const phoneHub = (env: Env, deviceId: string) => env.PHONE.get(env.PHONE.idFromName(deviceId));
+const ownerHub = (env: Env, ownerId: string) => env.OWNER.get(env.OWNER.idFromName(ownerId));
+const ticket = (env: Env, code: string) => env.TICKET.get(env.TICKET.idFromName(code));
+
+async function deviceOf(req: Request, env: Env): Promise<string | null> {
   const t = bearer(req);
-  return !!t && !!env.DEVICE_TOKEN_HASH && safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase());
+  if (!t) return null;
+  const p = parseToken(t);
+  if (p?.kind === "device") return (await phoneHub(env, p.id).verify(await sha256Hex(p.secret))) ? p.id : null;
+  return env.DEVICE_TOKEN_HASH && safeEqual(await sha256Hex(t), env.DEVICE_TOKEN_HASH.toLowerCase()) ? LEGACY_DEVICE : null;
 }
 
-function isMcpClient(req: Request, env: Env): boolean {
+async function ownerOf(req: Request, env: Env): Promise<string | null> {
   const t = bearer(req);
-  return !!t && !!env.MCP_TOKEN && safeEqual(t, env.MCP_TOKEN);
+  if (!t) return null;
+  const p = parseToken(t);
+  if (p?.kind === "owner") return (await ownerHub(env, p.id).verify(await sha256Hex(p.secret))) ? p.id : null;
+  return env.MCP_TOKEN && safeEqual(t, env.MCP_TOKEN) ? LEGACY_OWNER : null;
 }
 
-const phoneHub = (env: Env) => env.PHONE.get(env.PHONE.idFromName("phone"));
+const ownerOfDevice = async (env: Env, deviceId: string) => deviceId === LEGACY_DEVICE ? LEGACY_OWNER : (await phoneHub(env, deviceId).ownerId()) ?? LEGACY_OWNER;
+
+async function devicesOf(env: Env, ownerId: string): Promise<string[]> {
+  const linked = await ownerHub(env, ownerId).devices();
+  return ownerId === LEGACY_OWNER ? [LEGACY_DEVICE, ...linked] : linked;
+}
 
 export class PhoneError extends Error {}
 
@@ -84,6 +92,17 @@ function parsePhoneReply(body: Record<string, any>): PhoneReply {
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; sentAt: number };
 type OAuthToken = { token: string; expiresAt: number };
+type DeviceAuth = { token_hash: string; owner_id: string };
+type DeviceInfo = { app_version?: string; device?: string; mode?: string; ts: number };
+type PhoneStatus = {
+  name?: string;
+  mode: "push" | "none";
+  push_registered: boolean;
+  push_registered_at: string | null;
+  last_push: { latency_ms: number; at: string } | null;
+  last_seen: string | null;
+  device: DeviceInfo | null;
+};
 
 export class PhoneHub extends DurableObject<Env> {
   private pending = new Map<string, Pending>();
@@ -132,17 +151,36 @@ export class PhoneHub extends DurableObject<Env> {
     return this.matchingEvents(f);
   }
 
-  async updateDevice(info: { app_version?: unknown; device?: unknown }): Promise<Record<string, unknown>> {
-    const prev = (await this.ctx.storage.get<Record<string, unknown>>("device")) ?? {};
+  async updateDevice(info: { app_version?: unknown; device?: unknown }): Promise<DeviceInfo> {
+    const prev = (await this.ctx.storage.get<DeviceInfo>("device")) ?? {};
     const fresh = Object.fromEntries(Object.entries(info).filter(([, v]) => typeof v === "string" && v));
     const next = { ...prev, ...fresh, ts: Date.now() };
     await this.ctx.storage.put("device", next);
     return next;
   }
 
+  async enroll(a: DeviceAuth, name: string): Promise<void> {
+    await this.ctx.storage.put("auth", a);
+    await this.ctx.storage.put("name", name);
+  }
+
+  async verify(hash: string): Promise<boolean> {
+    const a = await this.ctx.storage.get<DeviceAuth>("auth");
+    return !!a && safeEqual(a.token_hash, hash);
+  }
+
+  async ownerId(): Promise<string | undefined> {
+    return (await this.ctx.storage.get<DeviceAuth>("auth"))?.owner_id;
+  }
+
+  async setName(name: string): Promise<void> {
+    await this.ctx.storage.put("name", name);
+  }
+
   async register(info: Registration): Promise<void> {
     await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now() });
-    await this.ctx.storage.put("device", { app_version: info.app_version, device: info.device, mode: info.mode, ts: Date.now() });
+    const str = (v: unknown) => (typeof v === "string" && v ? v.slice(0, 100) : undefined);
+    await this.ctx.storage.put("device", { app_version: str(info.app_version), device: str(info.device), mode: str(info.mode), ts: Date.now() } satisfies DeviceInfo);
     await this.ctx.storage.put("lastSeen", Date.now());
   }
 
@@ -184,16 +222,18 @@ export class PhoneHub extends DurableObject<Env> {
     return this.ctx.storage.get<number>("lastSeen");
   }
 
-  async status(): Promise<Record<string, unknown>> {
+  async status(): Promise<PhoneStatus> {
     const fcm = await this.ctx.storage.get<{ token: string; registered_at: number }>("fcm");
     const lastPush = await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush");
+    const name = await this.ctx.storage.get<string>("name");
     return {
+      ...(name !== undefined && { name }),
       mode: fcm ? "push" : "none",
       push_registered: !!fcm,
       push_registered_at: isoOrNull(fcm?.registered_at),
       last_push: lastPush ? { latency_ms: lastPush.latency_ms, at: new Date(lastPush.at).toISOString() } : null,
       last_seen: isoOrNull(await this.lastSeen()),
-      device: (await this.ctx.storage.get("device")) ?? null,
+      device: (await this.ctx.storage.get<DeviceInfo>("device")) ?? null,
     };
   }
 
@@ -432,57 +472,65 @@ const PHONE_TOOLS: PhoneTool[] = [
 
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }] });
 
-function buildServer(env: Env): McpServer {
-  const hub = phoneHub(env);
-  const server = new McpServer({ name: "health-connect", version: "0.1.0" });
-  for (const { name, description, shape, params } of PHONE_TOOLS) {
-    server.registerTool(name, { description, inputSchema: shape }, async (args: any) => {
+type DeviceSummary = { device_id: string; name: string | null; app_version: string | null; last_seen: string | null; push_registered: boolean };
+type Hub = DurableObjectStub<PhoneHub>;
+
+async function listDevices(env: Env, ownerId: string): Promise<DeviceSummary[]> {
+  return Promise.all((await devicesOf(env, ownerId)).map(async (id) => {
+    const s = await phoneHub(env, id).status();
+    return { device_id: id, name: s.name ?? s.device?.device ?? null, app_version: s.device?.app_version ?? null, last_seen: s.last_seen, push_registered: s.push_registered };
+  }));
+}
+
+const byRecency = (a: DeviceSummary, b: DeviceSummary) => (b.last_seen ?? "").localeCompare(a.last_seen ?? "");
+
+async function pickDevice(env: Env, ownerId: string, wanted?: string): Promise<Hub> {
+  const all = (await listDevices(env, ownerId)).sort(byRecency);
+  const hit = wanted === undefined ? all[0] : all.find((d) => d.device_id === wanted || d.name?.toLowerCase() === wanted.toLowerCase());
+  if (!hit) throw new PhoneError(wanted === undefined ? "no devices enrolled" : `unknown device "${wanted}"; known: ${all.map((d) => d.name ?? d.device_id).join(", ")}`);
+  return phoneHub(env, hit.device_id);
+}
+
+const device = z.string().min(1).max(64).optional().describe("Device id or name from list_devices; default is the most recently seen device");
+const failure = (e: any) => ({ isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] });
+
+function buildServer(env: Env, ownerId: string): McpServer {
+  const server = new McpServer({ name: "health-connect", version: "0.2.0" });
+  const tool = <A,>(name: string, description: string, shape: z.ZodRawShape, run: (hub: Hub, args: A) => Promise<unknown>) =>
+    server.registerTool(name, { description, inputSchema: { ...shape, device } }, async ({ device: wanted, ...args }: any) => {
       try {
-        return text(await hub.call(name, params(args)));
-      } catch (e: any) {
-        return { isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] };
+        return text(await run(await pickDevice(env, ownerId, wanted), args));
+      } catch (e) {
+        return failure(e);
       }
     });
-  }
-  server.registerTool("get_notification_responses", {
-    description: "Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response.",
-    inputSchema: {
+  for (const { name, description, shape, params } of PHONE_TOOLS) tool(name, description, shape, (hub, args) => hub.call(name, params(args)));
+  tool<{ notification_id?: string; since?: string; wait_seconds: number; timezone?: string }>("get_notification_responses",
+    "Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response.", {
       notification_id: z.string().min(1).max(64).optional().describe("The tag returned by send_notification"),
       since: iso.optional(),
       wait_seconds: z.number().int().min(0).max(20).default(0),
       timezone: range.timezone,
-    },
-  }, async (args: { notification_id?: string; since?: string; wait_seconds: number; timezone?: string }) => {
-    try {
-      const tz = zoneOf(args);
-      const since = args.since === undefined ? undefined : normalizeTime(args.since, tz);
-      return text({ responses: await hub.responses({ notification_id: args.notification_id, since }, args.wait_seconds * 1000) });
-    } catch (e: any) {
-      return { isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] };
-    }
-  });
-  server.registerTool("start_call", {
-    description: "Ring the phone like an incoming call from the assistant, with a full-screen call screen and Answer/Decline. Answer unlocks the phone and opens a Grok Bot voice call with agent_id. Waits until the call is answered, declined or missed (ring_seconds plus 5 s at most).",
-    inputSchema: {
+    }, async (hub, args) => {
+      const since = args.since === undefined ? undefined : normalizeTime(args.since, zoneOf(args));
+      return { responses: await hub.responses({ notification_id: args.notification_id, since }, args.wait_seconds * 1000) };
+    });
+  tool<{ agent_id: string; caller_name: string; reason: string; ring_seconds: number }>("start_call",
+    "Ring the phone like an incoming call from the assistant, with a full-screen call screen and Answer/Decline. Answer unlocks the phone and opens a Grok Bot voice call with agent_id. Waits until the call is answered, declined or missed (ring_seconds plus 5 s at most).", {
       agent_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).describe("Grok Bot agent id the voice call opens"),
       caller_name: z.string().min(1).max(60).default("Grok Bot"),
       reason: z.string().min(1).max(140).describe("Why you are calling, shown under the caller name"),
       ring_seconds: z.number().int().min(5).max(60).default(30),
-    },
-  }, async (args: { agent_id: string; caller_name: string; reason: string; ring_seconds: number }) => {
-    try {
+    }, async (hub, args) => {
       const call_id = `call-${crypto.randomUUID().slice(0, 12)}`;
-      const ring: any = await hub.call("start_call", { ...args, call_id });
+      const ring = (await hub.call("start_call", { ...args, call_id })) as Record<string, unknown>;
       const [first] = await hub.responses({ notification_id: call_id }, (args.ring_seconds + CALL_GRACE_S) * 1000);
-      if (first) return text({ ...ring, call_id, outcome: first.action_id, at: first.at });
+      if (first) return { ...ring, call_id, outcome: first.action_id, at: first.at };
       await hub.recordEvent({ notification_id: call_id, action_id: "missed", at: new Date().toISOString() });
-      return text({ ...ring, call_id, outcome: "missed" });
-    } catch (e: any) {
-      return { isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] };
-    }
-  });
-  server.registerTool("get_phone_status", { description: "Whether the phone is connected, last-seen time, app/permission info.", inputSchema: {} }, async () => {
-    const s: Record<string, unknown> = await hub.status();
+      return { ...ring, call_id, outcome: "missed" };
+    });
+  tool("get_phone_status", "Whether the phone is connected, last-seen time, app/permission info.", {}, async (hub) => {
+    const s: Record<string, unknown> = { ...(await hub.status()) };
     if (s.push_registered) {
       try {
         const phone: any = await hub.call("get_phone_status", {});
@@ -491,7 +539,15 @@ function buildServer(env: Env): McpServer {
         if (phone && typeof phone === "object") s.device = await hub.updateDevice({ app_version: phone.app_version, device: phone.device });
       } catch (e: any) { s.phone_error = String(e?.message ?? e); }
     }
-    return text(s);
+    return s;
+  });
+  server.registerTool("list_devices", { description: "Phones this connector can reach. Pass a device_id or name as `device` to any tool; the default is the most recently seen device.", inputSchema: {} }, async () => {
+    try {
+      const all = (await listDevices(env, ownerId)).sort(byRecency);
+      return text({ devices: all.map((d, i) => ({ ...d, default: i === 0 })) });
+    } catch (e) {
+      return failure(e);
+    }
   });
   return server;
 }
@@ -501,38 +557,106 @@ const EVENT_PATH = "/phone/event";
 
 async function handlePhone(req: Request, env: Env, path: string): Promise<Response> {
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
-  if (!(await isDevice(req, env))) return unauthorized();
+  const deviceId = await deviceOf(req, env);
+  if (!deviceId) return unauthorized();
+  const hub = phoneHub(env, deviceId);
   const body: unknown = await req.json().catch(() => null);
   if (!body || typeof body !== "object") return json({ error: "invalid json" }, 400);
   if (path === "/phone/register") {
     const reg = Registration.safeParse(body);
     if (!reg.success) return json({ error: "fcm_token required" }, 400);
-    await phoneHub(env).register(reg.data);
-    return json({ ok: true, push_configured: !!env.FCM_SERVICE_ACCOUNT });
+    await hub.register(reg.data);
+    return json({ ok: true, push_configured: !!env.FCM_SERVICE_ACCOUNT, device_id: deviceId });
   }
   if (path === EVENT_PATH) {
     const ev = NotificationEvent.safeParse(body);
     if (!ev.success) return json({ error: "notification_id, action_id and at required" }, 400);
-    await phoneHub(env).recordEvent(ev.data);
+    await hub.recordEvent(ev.data);
     return json({ ok: true });
   }
+  if (path === "/phone/name") {
+    const n = DeviceName.safeParse((body as { name?: unknown }).name);
+    if (!n.success) return json({ error: "name must be 1-60 characters" }, 400);
+    await hub.setName(n.data);
+    return json({ ok: true });
+  }
+  if (path === "/phone/connector-code" || path === "/phone/pairing-code") {
+    const kind = path === "/phone/pairing-code" ? "pair" : "claim";
+    const code = newCode();
+    const expires = Date.now() + CODE_TTL_MS;
+    await ticket(env, code).put({ kind, owner_id: await ownerOfDevice(env, deviceId), device_id: deviceId, expires });
+    return json({ code, expires_at: new Date(expires).toISOString(), ...(kind === "claim" && { claim_url: `${new URL(req.url).origin}${CLAIM_PATH}` }) });
+  }
   const id = decodeURIComponent(path.slice(RESULT_PREFIX.length));
-  const ok = await phoneHub(env).settle(id, parsePhoneReply(body));
+  const ok = await hub.settle(id, parsePhoneReply(body));
   return ok ? json({ ok: true }) : json({ error: "unknown or expired request id" }, 410);
+}
+
+const DeviceName = z.string().trim().min(1).max(60);
+const EnrollRequest = z.object({ name: DeviceName, pairing_code: z.string().max(20).optional() });
+const ENROLL_PATH = "/enroll";
+const CLAIM_PATH = "/claim";
+const RATE = { [ENROLL_PATH]: { limit: 10, windowMs: 3600_000 }, [CLAIM_PATH]: { limit: 20, windowMs: 3600_000 } };
+const PHONE_PATHS = new Set(["/phone/register", EVENT_PATH, "/phone/name", "/phone/connector-code", "/phone/pairing-code"]);
+
+async function allowed(req: Request, env: Env, path: keyof typeof RATE): Promise<boolean> {
+  const ip = req.headers.get("CF-Connecting-IP") ?? "local";
+  return env.GATE.get(env.GATE.idFromName(`${path}:${ip}`)).hit(RATE[path].limit, RATE[path].windowMs);
+}
+
+async function handleEnroll(req: Request, env: Env): Promise<Response> {
+  if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+  if (!(await allowed(req, env, ENROLL_PATH))) return json({ error: "too many enrollments; try again later" }, 429);
+  const body = EnrollRequest.safeParse(await req.json().catch(() => null));
+  if (!body.success) return json({ error: "name (1-60 characters) required" }, 400);
+  let ownerId: string | null = null;
+  if (req.headers.has("Authorization")) {
+    ownerId = await ownerOf(req, env);
+    if (!ownerId) return unauthorized();
+  } else if (body.data.pairing_code !== undefined) {
+    const code = normalizeCode(body.data.pairing_code);
+    ownerId = code ? (await ticket(env, code).take("pair"))?.owner_id ?? null : null;
+    if (!ownerId) return json({ error: "invalid or expired pairing code" }, 400);
+  }
+  const linked = ownerId !== null;
+  const owner = ownerId ?? newId();
+  const deviceId = newId();
+  const { token, hash } = await mintToken("device", deviceId);
+  await phoneHub(env, deviceId).enroll({ token_hash: hash, owner_id: owner }, body.data.name);
+  await ownerHub(env, owner).addDevice(deviceId);
+  return json({ device_id: deviceId, device_token: token, owner_id: owner, linked });
+}
+
+async function handleClaim(req: Request, env: Env): Promise<Response> {
+  if (req.method !== "POST" && req.method !== "GET") return new Response("method not allowed", { status: 405 });
+  if (!(await allowed(req, env, CLAIM_PATH))) return json({ error: "too many attempts; try again later" }, 429);
+  const raw = req.method === "GET" ? new URL(req.url).searchParams.get("code") : ((await req.json().catch(() => null)) as { code?: unknown } | null)?.code;
+  const code = typeof raw === "string" ? normalizeCode(raw) : null;
+  const t = code ? await ticket(env, code).take("claim") : null;
+  if (!t) return json({ error: "invalid or expired code" }, 400);
+  const s = await phoneHub(env, t.device_id).status();
+  const name = `Android Connect (${s.name ?? s.device?.device ?? "phone"})`;
+  const { token, hash } = await mintToken("owner", t.owner_id);
+  await ownerHub(env, t.owner_id).addToken(hash, name);
+  return json({ name, mcp_url: `${new URL(req.url).origin}/mcp`, transport: "streamable-http", headers: { Authorization: `Bearer ${token}` } }, 200, { "Cache-Control": "no-store" });
 }
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const { pathname, searchParams } = new URL(req.url);
-    if (pathname === "/phone/register" || pathname === EVENT_PATH || pathname.startsWith(RESULT_PREFIX)) return handlePhone(req, env, pathname);
+    if (PHONE_PATHS.has(pathname) || pathname.startsWith(RESULT_PREFIX)) return handlePhone(req, env, pathname);
+    if (pathname === ENROLL_PATH) return handleEnroll(req, env);
+    if (pathname === CLAIM_PATH) return handleClaim(req, env);
     if (pathname === "/admin/fcm-selftest") {
-      if (!isMcpClient(req, env)) return unauthorized();
-      return json(await phoneHub(env).fcmSelfTest(searchParams.get("token") ?? "fake-token-for-selftest"));
+      const ownerId = await ownerOf(req, env);
+      if (!ownerId) return unauthorized();
+      return json(await (await pickDevice(env, ownerId)).fcmSelfTest(searchParams.get("token") ?? "fake-token-for-selftest"));
     }
     if (pathname === "/mcp") {
-      if (!isMcpClient(req, env)) return unauthorized();
+      const ownerId = await ownerOf(req, env);
+      if (!ownerId) return unauthorized();
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      await buildServer(env).connect(transport);
+      await buildServer(env, ownerId).connect(transport);
       return transport.handleRequest(req);
     }
     if (pathname === "/") return new Response("health-connect-mcp ok\n");
