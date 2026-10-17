@@ -26,3 +26,12 @@ Forks decided without waiting for review, each with its reason. Change any of th
 - **Device names live only in `PhoneHub`.** `list_devices` reads each device, so no name is copied into the owner.
 - **The default device is the most recently seen one.** It changes whenever another device answers.
 - **`get_phone_status` adds `name` only for enrolled devices**, so the legacy contract output stays byte-identical.
+
+## Refactor and release prep (PR #4, PR #5)
+- **Two PRs, stacked on `enrollment`.** PR #4 holds the behavior-preserving refactor, the comment removal, and the rename. PR #5 holds the docs, the license, the release workflow, and 0.6.0. The commits did not overlap, so the split costs nothing.
+- **Comment Sicko rules applied by hand.** This environment has no subagent tool. Six comments were deleted. Two stay, because each one states a platform rule: Android 15 screen-recording sensitivity in `MainActivity.kt` and the FCM handler time budget in `Push.kt`.
+- **`@Suppress("MissingPermission")` in `Location.kt` stays open.** The check lives in `handle()` behind `Capabilities.location`, where lint cannot follow it. A fix needs lint to see the check in each caller, which is a reshape of the handler and not part of a no-behavior-change PR.
+- **The app keeps the maintainer Worker as its default URL.** The released APK carries the maintainer's Firebase config, so it only works with a Worker that holds that project's service account. Self-hosters build their own APK, as `docs/tutorial.md` shows.
+- **The release workflow reads five secrets and none are set.** `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `GOOGLE_SERVICES_JSON_BASE64`.
+- **The history scan found nothing to rewrite.** gitleaks over every branch reported no leaks. The real tokens, the service-account key ID, `.secrets.local`, `.firebase-sa.json`, `google-services.json`, and the keystore never appear in any commit.
+- **The e2e Worker runs the top of this stack.** Production stays on `enrollment`, because the refactor changes no wire behavior except the root text.
