@@ -38,7 +38,7 @@ Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
 | `get_weight` | – | `{unit:"kg", records:[{time,kg}]}` |
 | `get_nutrition` | – | `{days:[{date,kcal,protein_g,carbs_g,fat_g,entries}], entries:[…]}` |
 | `read_records` | `recordType` (Steps, HeartRate, RestingHeartRate, SleepSession, ExerciseSession, Distance, ActiveCaloriesBurned, TotalCaloriesBurned, Weight, Nutrition, Hydration), `limit` ≤1000 | `{recordType, count, records:[{source, time\|start,end, …type fields}]}` |
-| `get_phone_status` | – | `{app_version, device, android_sdk, battery, notification_access, notification_listener_connected, health_connect, granted[], missing[]}` |
+| `get_phone_status` | – | `{app_version, device, android_sdk, battery_percent, notification_access, notification_listener_connected, health_connect, granted[], missing[]}` |
 | `list_notifications` | `package`, `since` (offset ISO), `limit` 1–200 (default 50), `timezone`; no `start`/`end` | `{timezone, total_active, count, notifications:[…]}`, newest first |
 | `dismiss_notification` | `key`, or `notification_id` from `send_notification` (0.7.0) | `{key, removed}` or `{notification_id, removed}` |
 | `perform_notification_action` | `key`, `action` (index ≥ 0 or `"content"`), `replyText` | `{key, sent, opens_activity}` |

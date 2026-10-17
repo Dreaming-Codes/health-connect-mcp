@@ -17,7 +17,7 @@ const phones = new Map();
 
 function answer(method, params) {
   switch (method) {
-    case "get_phone_status": return { result: { app_version: "0.4.0", device: params.__phone ?? "Sim Phone", android_sdk: 37 } };
+    case "get_phone_status": return { result: { app_version: "0.4.0", device: params.__phone ?? "Sim Phone", android_sdk: 37, battery_percent: 81 } };
     case "list_notifications": return { result: { timezone: params.timezone, total_active: 1, count: 1, notifications: [{ key: "0|com.sim|1|null|1", package: "com.sim", actions: [{ index: 0, title: "Reply", reply: true }] }] } };
     case "dismiss_notification": if (params.notification_id) return { result: { notification_id: params.notification_id, removed: true } };
       return params.key === "missing" ? { error: { code: "not_found", message: "no active notification with that key" } } : { result: { key: params.key, removed: true } };
@@ -68,7 +68,7 @@ try {
   const call = async (name, args) => { const r = await c.callTool({ name, arguments: args }); return { error: !!r.isError, text: r.content[0].text, json: (() => { try { return JSON.parse(r.content[0].text); } catch { return null; } })() }; };
 
   let r = await call("get_phone_status", {});
-  check(r.json?.phone?.app_version === "0.4.0", "get_phone_status round trip");
+  check(r.json?.phone?.app_version === "0.4.0" && r.json.phone.battery_percent === 81, "get_phone_status round trip");
   check(last().keys.join() === "id,method,params", "push data carries only id, method, params");
 
   r = await call("list_notifications", { since: "2026-10-13T08:00", limit: 5 });

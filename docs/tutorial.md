@@ -94,6 +94,6 @@ If Android refuses a permission or a switch is greyed out, open **App info**, ta
 
 Ask Grok Bot: "What is my phone's status?"
 
-Grok Bot calls `get_phone_status`. The answer shows the app version, the Android version, the battery level, and the permissions you granted. The phone answers in one or two seconds.
+Grok Bot calls `get_phone_status`. The answer shows the app version, the Android version, the battery percentage, and the permissions you granted. The phone answers in one or two seconds.
 
 We now have our own Worker, our own Firebase project, and a phone that Grok Bot can reach. Next, try the [how-to guides](how-to.md) for each feature, or read [about the architecture and privacy](architecture.md).

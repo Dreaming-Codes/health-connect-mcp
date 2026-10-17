@@ -66,7 +66,7 @@ Nutrition entries and per-day totals (energy, macros).
 
 ## `get_phone_status`
 
-Whether the phone is connected, last-seen time, app/permission info.
+Whether the phone is connected, its last-seen time, app version, battery_percent (0-100) and permissions.
 
 No parameters.
 

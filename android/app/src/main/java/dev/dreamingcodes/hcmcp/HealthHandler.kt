@@ -79,10 +79,12 @@ class HealthHandler(private val ctx: Context) : MethodGroup {
 
   private suspend fun status(): JSONObject {
     val bm = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-    val level = bm?.let { it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1).toDouble() / it.getIntExtra(BatteryManager.EXTRA_SCALE, 100) }
+    val level = bm?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = bm?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+    val percent: Any = if (level >= 0 && scale > 0) Math.round(level * 100.0 / scale).toInt() else JSONObject.NULL
     val sdk = HealthConnectClient.getSdkStatus(ctx)
     val o = JSONObject().put("app_version", BuildConfig.VERSION_NAME).put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
-      .put("android_sdk", Build.VERSION.SDK_INT).put("battery", level)
+      .put("android_sdk", Build.VERSION.SDK_INT).put("battery_percent", percent)
       .put("capabilities", Capabilities.json(ctx))
       .put("health_connect", when (sdk) { HealthConnectClient.SDK_AVAILABLE -> "available"; HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> "update_required"; else -> "unavailable" })
     if (sdk == HealthConnectClient.SDK_AVAILABLE) {

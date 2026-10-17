@@ -131,7 +131,7 @@ export function buildServer(hub: Hub): McpServer {
     await hub.recordEvent({ notification_id: call_id, action_id: "missed", at: new Date().toISOString() });
     return { ...ring, call_id, outcome: "missed" };
   });
-  tool("get_phone_status", "Whether the phone is connected, last-seen time, app/permission info.", {}, async () => {
+  tool("get_phone_status", "Whether the phone is connected, its last-seen time, app version, battery_percent (0-100) and permissions.", {}, async () => {
     const s: Record<string, unknown> = { ...(await hub.status()) };
     if (s.push_registered) {
       try {
