@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { b64url } from "./fcm";
 
 export const LEGACY_OWNER = "0000000000000000";
 export const LEGACY_DEVICE = "phone";
@@ -13,7 +14,6 @@ const PREFIX: Record<TokenKind, string> = { device: "hcd", owner: "hco" };
 const TOKEN_RE = /^hc([do])_([0-9a-f]{16})_([A-Za-z0-9_-]{43})$/;
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-const base64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
 
@@ -37,7 +37,7 @@ export function parseToken(t: string): ParsedToken | null {
 }
 
 export async function mintToken(kind: TokenKind, id: string): Promise<{ token: string; hash: string }> {
-  const secret = base64url(random(32));
+  const secret = b64url(random(32));
   return { token: `${PREFIX[kind]}_${id}_${secret}`, hash: await sha256Hex(secret) };
 }
 
