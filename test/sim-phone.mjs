@@ -17,9 +17,10 @@ const phones = new Map();
 
 function answer(method, params) {
   switch (method) {
-    case "get_phone_status": return { result: { app_version: "0.4.0", device: params.__phone ?? "Sim Phone", android_sdk: 37 } };
+    case "get_phone_status": return { result: { app_version: "0.4.0", device: params.__phone ?? "Sim Phone", android_sdk: 37, battery_percent: 81 } };
     case "list_notifications": return { result: { timezone: params.timezone, total_active: 1, count: 1, notifications: [{ key: "0|com.sim|1|null|1", package: "com.sim", actions: [{ index: 0, title: "Reply", reply: true }] }] } };
-    case "dismiss_notification": return params.key === "missing" ? { error: { code: "not_found", message: "no active notification with that key" } } : { result: { key: params.key, removed: true } };
+    case "dismiss_notification": if (params.notification_id) return { result: { notification_id: params.notification_id, removed: true } };
+      return params.key === "missing" ? { error: { code: "not_found", message: "no active notification with that key" } } : { result: { key: params.key, removed: true } };
     case "perform_notification_action": return { result: { key: params.key, sent: true, opens_activity: false } };
     case "send_notification": return { result: { notification_id: params.tag ?? "nsim0001", channel_id: params.alarm ? "bot_alarm" : "bot_assistant_default" } };
     case "start_call": return { result: { call_id: params.call_id, ringing: true, full_screen: true } };
@@ -67,7 +68,7 @@ try {
   const call = async (name, args) => { const r = await c.callTool({ name, arguments: args }); return { error: !!r.isError, text: r.content[0].text, json: (() => { try { return JSON.parse(r.content[0].text); } catch { return null; } })() }; };
 
   let r = await call("get_phone_status", {});
-  check(r.json?.phone?.app_version === "0.4.0", "get_phone_status round trip");
+  check(r.json?.phone?.app_version === "0.4.0" && r.json.phone.battery_percent === 81, "get_phone_status round trip");
   check(last().keys.join() === "id,method,params", "push data carries only id, method, params");
 
   r = await call("list_notifications", { since: "2026-10-13T08:00", limit: 5 });
@@ -76,6 +77,12 @@ try {
 
   r = await call("dismiss_notification", { key: "missing" });
   check(r.error && r.text.includes("not_found"), "dismiss_notification surfaces not_found");
+  r = await call("dismiss_notification", { notification_id: "poll1" });
+  check(!r.error && r.json.removed && last().params.notification_id === "poll1" && !("key" in last().params), "dismiss_notification by notification_id");
+  r = await call("dismiss_notification", { key: "k", notification_id: "poll1" });
+  check(r.error && r.text.includes("exactly one"), "dismiss_notification refuses key and notification_id together");
+  r = await call("dismiss_notification", {});
+  check(r.error && r.text.includes("exactly one"), "dismiss_notification needs key or notification_id");
 
   r = await call("perform_notification_action", { key: "k", action: 0, replyText: "on my way" });
   check(!r.error && r.json.sent && last().params.replyText === "on my way" && last().params.action === 0, "perform_notification_action forwards reply");
@@ -90,6 +97,10 @@ try {
   const t0 = Date.now();
   r = await call("get_notification_responses", { notification_id: "poll1", wait_seconds: 10 });
   check(r.json?.responses?.[0]?.reply_text === "sounds good" && Date.now() - t0 < 8000, "get_notification_responses long-polls until a reply arrives");
+  const zoned = (v, offset) => typeof v === "string" && v.endsWith(offset) && !Number.isNaN(Date.parse(v));
+  r = await call("get_notification_responses", { notification_id: "poll1", timezone: "America/Los_Angeles" });
+  const resp = r.json?.responses?.[0] ?? {};
+  check(zoned(resp.phone_time, "-07:00") && zoned(resp.received_at, "-07:00") && !("at" in resp), "get_notification_responses gives phone_time and received_at in the timezone");
   check((await post("/phone/event", { notification_id: "poll1" })).status === 400, "malformed event is rejected");
   check((await fetch(base + "/phone/event", { method: "POST", headers: { Authorization: "Bearer nope" }, body: "{}" })).status === 401, "event needs the device token");
 
@@ -97,14 +108,19 @@ try {
   check(!r.error && last().params.alarm === true && last().params.insistent === true, "alarm notification forwards alarm and insistent");
 
   r = await call("start_call", { agent_id: "answer-me", reason: "Your 9:00 starts in 5 minutes", ring_seconds: 5 });
-  check(r.json?.outcome === "answered" && r.json.call_id?.startsWith("call-"), "start_call waits for answered");
+  check(r.json?.outcome === "answered" && r.json.call_id?.startsWith("call-") && zoned(r.json.phone_time, "+02:00"), "start_call waits for answered");
+  check(!("timezone" in last().params), "start_call keeps timezone on the Worker");
   r = await call("start_call", { agent_id: "nobody", reason: "Ping", ring_seconds: 5 });
   check(r.json?.outcome === "missed", "start_call reports missed after ring_seconds + grace");
   r = await call("start_call", { agent_id: "bad id!", reason: "x" });
   check(r.error, "start_call rejects an invalid agent_id");
 
   r = await call("get_location", {});
-  check(!r.error && r.json.latitude === 52.37 && last().params.max_age_s === 120, "get_location round trip with defaults");
+  check(!r.error && r.json.latitude === 52.37 && last().params.max_age_s === 120 && last().params.timezone === "Europe/Amsterdam", "get_location round trip with defaults");
+  r = await call("get_phone_status", { timezone: "Asia/Tokyo" });
+  check(r.json?.timezone === "Asia/Tokyo" && zoned(r.json.last_seen, "+09:00") && zoned(r.json.push_registered_at, "+09:00") && zoned(r.json.last_push?.at, "+09:00") && zoned(r.json.device?.updated_at, "+09:00") && !("ts" in r.json.device), "get_phone_status times follow timezone");
+  r = await call("get_phone_status", { timezone: "Mars/Olympus" });
+  check(r.error && r.text.includes("invalid timezone"), "get_phone_status rejects an invalid timezone");
   r = await call("list_messages", { since: "2026-10-12", until: "2026-10-13", box: "inbox" });
   check(!r.error && last().params.since === "2026-10-12T00:00:00+02:00" && last().params.until === "2026-10-13T00:00:00+02:00", "list_messages normalizes since/until");
   r = await call("list_messages", { since: "2026-10-13", until: "2026-10-12" });

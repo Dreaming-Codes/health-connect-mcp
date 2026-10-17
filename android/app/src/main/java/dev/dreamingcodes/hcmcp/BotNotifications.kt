@@ -105,6 +105,14 @@ class BotNotifications(private val ctx: Context) : MethodGroup {
   }
 }
 
+fun dismissBotNotification(ctx: Context, tag: String): JSONObject {
+  val nm = ctx.getSystemService(NotificationManager::class.java)
+  if (nm.activeNotifications.none { it.id == BOT_NOTIFICATION_ID && it.tag == tag })
+    throw PhoneFailure("not_found", "no active notification with that notification_id")
+  nm.cancel(tag, BOT_NOTIFICATION_ID)
+  return JSONObject().put("notification_id", tag).put("removed", true)
+}
+
 class BotEventReceiver : BroadcastReceiver() {
   override fun onReceive(ctx: Context, intent: Intent) {
     val tag = intent.getStringExtra(EXTRA_TAG) ?: return

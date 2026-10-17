@@ -46,6 +46,9 @@
     </service>
     <receiver android:name=".BotEventReceiver" android:exported="false"/>
     <receiver android:name=".CallDeclineReceiver" android:exported="false"/>
+    <receiver android:name=".AppUpdatedReceiver" android:exported="false">
+      <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED"/></intent-filter>
+    </receiver>
     <activity android:name=".IncomingCallActivity" android:exported="false" android:showWhenLocked="true" android:turnScreenOn="true"
       android:excludeFromRecents="true" android:launchMode="singleTask" android:taskAffinity="dev.dreamingcodes.hcmcp.call"
       android:theme="@android:style/Theme.Material.NoActionBar"/>

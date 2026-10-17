@@ -1,6 +1,8 @@
 package dev.dreamingcodes.hcmcp
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.annotation.WorkerThread
@@ -93,6 +95,9 @@ suspend fun dispatch(ctx: Context, method: String, params: JSONObject): Any {
   return run(params)
 }
 
+// FirebaseMessagingService.onMessageReceived must return within 20 s; the rest of the window is for posting the result.
+private const val DISPATCH_BUDGET_MS = 15_000L
+
 class PushService : FirebaseMessagingService() {
   override fun onNewToken(token: String) {
     if (Settings.isConfigured(this)) WorkerApi.register(this, token)
@@ -103,10 +108,9 @@ class PushService : FirebaseMessagingService() {
     val id = d["id"] ?: return
     val method = d["method"] ?: return
     val reply = JSONObject()
-    // High-priority messages get about 20 s of execution; leave headroom to post the reply.
     runBlocking {
       try {
-        withTimeout(15_000) { reply.put("result", dispatch(this@PushService, method, JSONObject(d["params"] ?: "{}"))) }
+        withTimeout(DISPATCH_BUDGET_MS) { reply.put("result", dispatch(this@PushService, method, JSONObject(d["params"] ?: "{}"))) }
       } catch (e: Throwable) {
         reply.put("error", errorJson(e))
       }
@@ -120,4 +124,12 @@ class PushService : FirebaseMessagingService() {
     BridgeState.set { it.copy(lastRequestAt = now, lastRequestMethod = method) }
   }
 
+}
+
+class AppUpdatedReceiver : BroadcastReceiver() {
+  override fun onReceive(ctx: Context, intent: Intent) {
+    if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED || !Settings.isConfigured(ctx)) return
+    val pending = goAsync()
+    Thread { try { WorkerApi.register(ctx) } finally { pending.finish() } }.start()
+  }
 }

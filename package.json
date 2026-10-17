@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node test/sim-phone.mjs",
+    "test": "node test/budgets.mjs && node test/sim-phone.mjs",
+    "test:budgets": "node test/budgets.mjs",
     "test:methods": "node test/methods.mjs",
     "test:contract": "bash test/with-worker.sh test/contract.mjs",
     "docs:tools": "bash test/with-worker.sh scripts/tools-reference.mjs > docs/reference/tools.md",

@@ -55,7 +55,7 @@ sealed interface NotificationAction {
 class NotificationHandler(private val ctx: Context) : MethodGroup {
   override val methods = mapOf(
     "list_notifications" runs { connectedListener(); list(it) },
-    "dismiss_notification" runs { dismiss(connectedListener(), it.key()) },
+    "dismiss_notification" runs { p -> p.optString("notification_id").takeIf { it.isNotEmpty() }?.let { dismissBotNotification(ctx, it) } ?: dismiss(connectedListener(), p.key()) },
     "perform_notification_action" runs { perform(connectedListener(), it.key(), it.action(), it.optString("replyText").takeIf { r -> r.isNotEmpty() }) },
   )
 

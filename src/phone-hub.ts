@@ -3,6 +3,7 @@ import { z } from "zod";
 import { safeEqual, type TokenKind } from "./access";
 import type { Env } from "./env";
 import { FcmError, mintAccessToken, sendData, type ServiceAccount } from "./fcm";
+import { formatIn } from "./time";
 
 const OAUTH_REFRESH_MARGIN_MS = 120_000;
 const isoOrNull = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
@@ -25,7 +26,7 @@ export const NotificationEvent = z.object({
   at: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "ISO-8601 time"),
 });
 export type NotificationEvent = z.infer<typeof NotificationEvent>;
-type StoredEvent = NotificationEvent & { received_at: string };
+export type StoredEvent = NotificationEvent & { received_at: string };
 type ResponseFilter = { notification_id?: string; since?: string };
 
 const EVENT_PREFIX = "event:";
@@ -43,6 +44,7 @@ type OAuthToken = { token: string; expiresAt: number };
 type DeviceAuth = { token_hash: string };
 type ConnectorToken = { hash: string; label: string; created: number };
 type DeviceInfo = { app_version?: string; device?: string; mode?: string; ts: number };
+type DeviceView = Omit<DeviceInfo, "ts"> & { updated_at: string };
 type PhoneStatus = {
   name?: string;
   mode: "push" | "none";
@@ -50,8 +52,10 @@ type PhoneStatus = {
   push_registered_at: string | null;
   last_push: { latency_ms: number; at: string } | null;
   last_seen: string | null;
-  device: DeviceInfo | null;
+  device: DeviceView | null;
 };
+
+const deviceView = ({ ts, ...d }: DeviceInfo, tz: string): DeviceView => ({ ...d, updated_at: formatIn(ts, tz) });
 
 export class PhoneHub extends DurableObject<Env> {
   private pending = new Map<string, Pending>();
@@ -100,12 +104,12 @@ export class PhoneHub extends DurableObject<Env> {
     return this.matchingEvents(f);
   }
 
-  async updateDevice(info: { app_version?: unknown; device?: unknown }): Promise<DeviceInfo> {
+  async updateDevice(info: { app_version?: unknown; device?: unknown }, tz: string): Promise<DeviceView> {
     const prev = (await this.ctx.storage.get<DeviceInfo>("device")) ?? {};
     const fresh = Object.fromEntries(Object.entries(info).filter(([, v]) => typeof v === "string" && v));
     const next = { ...prev, ...fresh, ts: Date.now() };
     await this.ctx.storage.put("device", next);
-    return next;
+    return deviceView(next, tz);
   }
 
   async enroll(tokenHash: string, name: string): Promise<void> {
@@ -156,7 +160,13 @@ export class PhoneHub extends DurableObject<Env> {
     return this.ctx.storage.get<number>("lastSeen");
   }
 
-  async status(): Promise<PhoneStatus> {
+  async displayName(): Promise<string | undefined> {
+    return (await this.ctx.storage.get<string>("name")) ?? (await this.ctx.storage.get<DeviceInfo>("device"))?.device;
+  }
+
+  async status(tz: string): Promise<PhoneStatus> {
+    const at = (ms: number | undefined) => (ms ? formatIn(ms, tz) : null);
+    const device = await this.ctx.storage.get<DeviceInfo>("device");
     const fcm = await this.ctx.storage.get<{ token: string; registered_at: number }>("fcm");
     const lastPush = await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush");
     const name = await this.ctx.storage.get<string>("name");
@@ -164,10 +174,10 @@ export class PhoneHub extends DurableObject<Env> {
       ...(name !== undefined && { name }),
       mode: fcm ? "push" : "none",
       push_registered: !!fcm,
-      push_registered_at: isoOrNull(fcm?.registered_at),
-      last_push: lastPush ? { latency_ms: lastPush.latency_ms, at: new Date(lastPush.at).toISOString() } : null,
-      last_seen: isoOrNull(await this.lastSeen()),
-      device: (await this.ctx.storage.get<DeviceInfo>("device")) ?? null,
+      push_registered_at: at(fcm?.registered_at),
+      last_push: lastPush ? { latency_ms: lastPush.latency_ms, at: formatIn(lastPush.at, tz) } : null,
+      last_seen: at(await this.lastSeen()),
+      device: device ? deviceView(device, tz) : null,
     };
   }
 

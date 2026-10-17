@@ -93,8 +93,7 @@ async function handleClaim(req: Request, env: Env): Promise<Response> {
   const t = code ? await ticket(env, code).take() : null;
   if (!t) return json({ error: "invalid or expired code" }, 400);
   const hub = phoneHub(env, t.device_id);
-  const s = await hub.status();
-  const name = `Android Connect (${s.name ?? s.device?.device ?? "phone"})`;
+  const name = `Android Connect (${(await hub.displayName()) ?? "phone"})`;
   const { token, hash } = await mintToken("connector", t.device_id);
   await hub.addConnector(hash, name);
   return json({ name, mcp_url: `${new URL(req.url).origin}/mcp`, transport: "streamable-http", headers: { Authorization: `Bearer ${token}` } }, 200, { "Cache-Control": "no-store" });

@@ -56,3 +56,12 @@ Forks decided without waiting for review, each with its reason. Change any of th
 - **`/enroll` ignores `Authorization`.** It used to link a phone to the bearer's owner. Every enrollment now creates a new phone.
 - **An install without a device id shows the Connect form.** A 0.6.0 phone set up with a pasted device token has no device id, so it re-enrolls on first open of 0.7.0 instead of failing every push.
 - **Version 0.7.0.** Old phones and old connectors stop working, so the version moves up a minor step.
+
+## Live-test fixes (0.7.0)
+- **The app re-registers after an update** through a `MY_PACKAGE_REPLACED` receiver. Registering on every push would add a request to each tool call.
+- **`dismiss_notification` takes exactly one of `key` or `notification_id`.** One tool keeps one verb. With `notification_id` the app cancels its own notification, which needs no notification access.
+- **`battery` is replaced, not kept beside `battery_percent`.** Two fields for one fact invite the same misreading.
+- **Both event times stay, renamed.** `phone_time` is when the user tapped, by the phone's clock. `received_at` is the Worker's clock, which `since` filters on. They differ by delivery time and clock skew, so dropping either loses a fact.
+- **One time format on both sides**, `YYYY-MM-DDTHH:mm:ss.SSS±HH:MM`. Kotlin's `OffsetDateTime.toString()` drops zero seconds and varies the fraction, so the app now uses a fixed pattern. Error messages such as `last seen …` stay in UTC: they are prose, not fields.
+- **`start_call` keeps `timezone` on the Worker.** The phone has no time to format, so the push carries the same params as before.
+- **Open: network work still runs inside `onMessageReceived`.** The app dispatches and posts the result within the 20 s FCM window, so a slow network can cut a reply short. Moving the work into an expedited WorkManager job would lift that limit but adds a scheduling hop to every call. Not done; `test/budgets.mjs` keeps the current budgets nested.
