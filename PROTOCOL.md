@@ -1,11 +1,11 @@
 # Phone ⇄ Worker protocol (v2, push only)
 
-Live pull, push only. The Worker stores **no health data and no notification content**. The Durable Object `PhoneHub` (name `phone`) keeps only
+Live pull, push only. The Worker stores **no health data and no notification content**. The Durable Object `PhoneHub` (one per enrolled phone) keeps only
 the phone's FCM token, `lastSeen`, the last push latency, device metadata, a cached Google OAuth token and in-flight
 request ids (in memory). There is no persistent connection.
 
-All phone → Worker calls use `Authorization: Bearer <DEVICE_TOKEN>`. The Worker compares `sha256_hex(token)` with the
-secret `DEVICE_TOKEN_HASH` in constant time, and a bad or missing token gets `401`.
+All phone → Worker calls use `Authorization: Bearer <device token>` from `POST /enroll`. The Worker compares the hash of
+the token's secret with the one stored in that phone's `PhoneHub` in constant time, and a bad or missing token gets `401`.
 
 ## 1. Register: `POST /phone/register`
 Body `{"fcm_token":"…","app_version":"0.3.1","device":"Google Pixel","mode":"push"}` → `200 {"ok":true,"push_configured":true}`.
@@ -123,29 +123,24 @@ Other error codes: `notifications_permission_missing`, `channel_blocked`, `locat
 `get_phone_status` (MCP) returns `{mode:"push"|"none", push_registered, push_registered_at, last_push:{latency_ms,at},
 last_seen, device}` plus `phone` (the phone's own answer, which takes one push round trip) when registered.
 
-## Enrollment and multi-device
+## Enrollment
 Design and tradeoffs: `docs/enrollment.md`.
 
 | endpoint | auth | body | answer |
 |---|---|---|---|
-| `POST /enroll` | none (new owner), owner MCP token (link), or none + `pairing_code` (link) | `{name, pairing_code?}` | `{device_id, device_token, owner_id, linked}` |
+| `POST /enroll` | none | `{name}` | `{device_id, device_token}` |
 | `POST /phone/connector-code` | device token | `{}` | `{code, expires_at, claim_url}` |
-| `POST /phone/pairing-code` | device token | `{}` | `{code, expires_at}` |
 | `POST /phone/name` | device token | `{name}` | `{ok}` |
 | `POST /claim` or `GET /claim?code=` | none | `{code}` | `{name, mcp_url, transport, headers:{Authorization}}` |
 
-- Tokens are `hcd_<device_id>_<secret>` (device) and `hco_<owner_id>_<secret>` (connector). Only SHA-256 hashes of
-  the secret are stored, in the device's `PhoneHub` and the owner's `OwnerHub`.
+- Tokens are `hcd_<device_id>_<secret>` (device) and `hco_<device_id>_<secret>` (connector). Only SHA-256 hashes of
+  the secret are stored, in the phone's `PhoneHub`.
 - Codes are 8 Crockford base32 characters shown as `XXXX-XXXX`, single use, valid for 10 minutes. Input is
   case-insensitive and `O`/`I`/`L` read as `0`/`1`.
 - `/enroll` allows 10 requests per client IP per hour, and `/claim` allows 20.
-- A connector token only reaches its owner's devices, and a device token only works on `/phone/*`.
-- Legacy: the `MCP_TOKEN` secret is the connector of owner `0000000000000000`, and `DEVICE_TOKEN_HASH` is its device
-  `phone` (the original Durable Object). Both keep working unchanged and can link new devices.
-- MCP: `list_devices`, and an optional `device` (id or name) on every phone tool. Without `device`, the most recently
-  seen device answers.
+- A connector token reaches only its own phone and works only on `/mcp`. A device token works only on `/phone/*`.
 
 ## Secrets (Worker)
-`MCP_TOKEN`, `DEVICE_TOKEN_HASH`, `FCM_SERVICE_ACCOUNT` (Firebase service-account JSON; RS256 JWT is signed with WebCrypto
-and the OAuth token is cached in DO storage). Diagnostic: `GET /admin/fcm-selftest?token=<fcm token>` with the MCP token.
+`FCM_SERVICE_ACCOUNT` (Firebase service-account JSON; RS256 JWT is signed with WebCrypto and the OAuth token is cached
+in DO storage).
 `FCM_ENDPOINT` (optional) overrides `https://fcm.googleapis.com`; the simulated-phone test uses it.

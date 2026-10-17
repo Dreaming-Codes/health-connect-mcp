@@ -1,73 +1,61 @@
-# Enrollment and multi-device
+# Enrollment
 
 ## Problem
-Setup needs two hand-copied secrets: the device token and the MCP token. Both are Worker secrets, so there is exactly one phone and one connector. The goal is that the user only types the Worker URL. A stranger who knows that URL must not be able to read Lorenzo's phones. One connector must be able to see several phones. Installed 0.3.2 and the existing Grok Bot connector must keep working without changes.
 
-## Usage (caller's view)
-New phone:
-1. App: enter `https://…workers.dev`, tap **Connect**.
-   - `POST /enroll {name}` returns `{device_id, device_token, owner_id}`.
-   - The app stores the token and registers FCM as before.
-2. App: tap **Register with Grok Bot**.
-   - `POST /phone/connector-code` returns `{code, expires_at}`.
-   - Grok Bot is opened with a prefilled message: "Add the MCP connector for my phone: claim code K7QM-2XRA at https://…/claim".
-3. Grok Bot: `POST /claim {code}` returns `{name, mcp_url, headers: {Authorization: "Bearer hco_…"}}`.
+The user types only the Worker URL. A stranger who knows that URL must not reach anyone else's phone. Grok Bot must get a connector without a long-lived key passing through the chat.
+
+## Flow
+
+1. In the app, the user enters `https://…workers.dev` and taps **Connect**.
+   - `POST /enroll {name}` returns `{device_id, device_token}`.
+   - The app stores the token and registers its FCM token.
+2. The user taps **Register with Grok Bot**.
+   - `POST /phone/connector-code` returns `{code, expires_at, claim_url}`.
+   - The app shares a prefilled message with the code into Grok Bot.
+3. Grok Bot calls `POST /claim {code}` and gets `{name, mcp_url, transport, headers: {Authorization: "Bearer hco_…"}}`.
    - The code works once and expires after 10 minutes.
+   - `name` is `Android Connect (<device name>)`, so two phones give two connectors with different names.
 
-Second phone for the same connector:
-- Phone A: **Pair another phone** calls `POST /phone/pairing-code` and shows `{code}`.
-- Phone B: enter the URL and that code. `POST /enroll {name, pairing_code}` joins A's owner.
-- Or, with the owner's MCP token: `POST /enroll` with `Authorization: Bearer <mcp token>`.
-
-MCP:
-- `list_devices` returns `{devices:[{device_id, name, app_version, last_seen, default}]}`.
-- Every phone tool takes an optional `device` (id or name). The default is the most recently seen device.
+A connector reaches exactly one phone. To add a second phone, enroll it the same way and register it with Grok Bot as its own connector. No tool takes a device argument.
 
 ## Shape
-- Tokens name their own scope:
+
+- Tokens name the phone they belong to:
   - device token `hcd_<device_id>_<secret>`
-  - connector token `hco_<owner_id>_<secret>`
-  The id part routes to the Durable Object that owns the hash, so there is no global registry DO and no hot singleton. The secret is 32 random bytes. Only SHA-256 hashes are stored. Per boundary-discipline, `parseToken` is the only place that reads the format.
-- `PhoneHub` (one per device, `idFromName(device_id)`) owns:
-  - device auth (token hash)
-  - owner_id
-  - name and app info
-  - FCM, pending calls, events
-  It is unchanged except for `enroll` and `verify`.
-- `OwnerHub` (one per owner, `idFromName(owner_id)`) owns:
-  - the device id list
-  - connector token hashes, each with a label and created time
-  It does not copy device state; `list_devices` asks each `PhoneHub`. Per split-ownership, each fact has one writer.
-- `Ticket` (one per code, `idFromName(code)`) is a single-use `{kind:"pair"|"claim", owner_id, device_id, expires}`.
-  - Codes are 8 Crockford base32 characters (40 bits).
-  - `take()` deletes the ticket on first read.
-- `Gate` (one per client IP and route) is a fixed-window counter.
-  - `/enroll` allows 10 per hour.
-  - `/claim` allows 20 per hour.
-- Legacy access is a special owner. The env `MCP_TOKEN` resolves to owner `legacy`, and env `DEVICE_TOKEN_HASH` resolves to device `phone`. That is the existing `idFromName("phone")` DO, so its storage is untouched. `OwnerHub("legacy")` always includes `phone`. New devices can be linked into `legacy` with the env MCP token or with a pairing code from the legacy phone.
-- `/mcp` resolves the bearer to an owner and builds the server for that owner's devices. A device token never works on `/mcp`, and a connector token never works on `/phone/*`.
-
-## Synthesis decision
-No arena runners were available, so two shapes were drafted here:
-- (A) a registry DO that maps token hashes to owners and devices;
-- (B) self-routing tokens with per-owner and per-device DOs.
-
-B is the base. A puts every request through one singleton, and it keeps device names in two places. From A, B adopts treating legacy as a virtual owner.
+  - connector token `hco_<device_id>_<secret>`
+  The id routes the request to that phone's `PhoneHub`, so the Worker has no token table and no singleton. The secret is 32 random bytes, and only its SHA-256 hash is stored. `parseToken` is the only code that reads the format.
+- `PhoneHub` (one per phone, `idFromName(device_id)`) owns the device token hash, the connector token hashes with their labels, the name, the FCM registration, pending calls and notification events.
+- `CodeTicket` (one per claim code, `idFromName(code)`) holds `{device_id, expires}` and deletes itself on the first read or after 10 minutes. Codes are 8 Crockford base32 characters (40 bits).
+- `Gate` (one per client IP and route) is a fixed-window counter: 10 enrollments and 20 claims per hour.
+- A device token works only on `/phone/*`, and a connector token works only on `/mcp`.
 
 ## Tradeoffs accepted
-- Anyone who knows the URL can enroll a new, empty owner. They see only their own phone. In exchange, setup is URL-only. Rate limits cap the abuse, which costs DO storage and our FCM quota.
-- The token format exposes owner and device ids. They are random and carry no data. In exchange, auth needs no lookup table.
-- The claim code is visible in the chat transcript, so a transcript reader could claim within 10 minutes if Grok Bot has not already. The token itself never appears there; it reaches Grok Bot only in the claim tool result.
-- `list_devices` costs one DO call per device. Owners have a handful of devices.
+
+- Anyone who knows the URL can enroll a phone. That phone is the only one their connector reaches. Rate limits cap the cost in Durable Object storage and FCM quota.
+- Tokens expose the device id. It is random and carries no data, and in exchange authentication needs no lookup.
+- The claim code is visible in the chat transcript. A reader could claim it within 10 minutes if Grok Bot has not already. The token itself never appears in the chat.
 
 ## Alternatives considered
-- Registry DO (A): every request crosses one global object, and device names would have two writers.
-- Signed JWT tokens with no storage: they cannot be revoked without a denylist, which is the storage we were avoiding.
-- Requiring an enroll secret: this brings back a second thing to type, which is exactly what the redesign removes.
+
+- Pairing codes that put several phones behind one connector. Removed in 0.7.0: an owner object between the connector and the phones added a Durable Object class, a `device` argument on every tool and a default-device rule, and one connector per phone needs none of them.
+- A registry Durable Object that maps token hashes to phones. Every request would cross one global object.
+- Signed tokens without storage. They cannot be revoked without a denylist, which is the storage they were meant to avoid.
+- An enrollment secret typed on each phone. It brings back the copy-a-secret step that enrollment removed.
+
+## Upgrade from 0.6.0 or earlier
+
+0.7.0 removes the `MCP_TOKEN` and `DEVICE_TOKEN_HASH` secrets, pairing and the `OwnerHub` Durable Object. Phones and connectors set up with them stop working when the Worker is deployed.
+
+1. Deploy the Worker. Migration `v3` deletes the `OwnerHub` class and its storage.
+2. Install app 0.7.0 on each phone and open it. A phone that has no device id shows the **Connect** form. Tap **Connect**.
+3. Tap **Register with Grok Bot**, and remove the old connector from Grok Bot.
+4. Remove the old secrets: `npx wrangler secret delete MCP_TOKEN` and `npx wrangler secret delete DEVICE_TOKEN_HASH`.
+
+## Rollback
+
+Migration `v3` is one-way: Cloudflare deletes the `OwnerHub` storage and refuses to roll a version back past a migration. To return to 0.6.0, deploy the 0.6.0 code with a new migration `v4` that adds an empty `OwnerHub` class (`new_sqlite_classes`), and put the old secrets back. Connectors claimed under 0.6.0 enrollment are lost and must be claimed again. Phones enrolled under 0.7.0 keep their device tokens.
 
 ## Open questions and risks
-- Grok Bot has no deep link that adds an MCP server. `/v1/plugin/add` only takes a marketplace plugin id. The handoff is therefore a prefilled share (`ACTION_SEND text/plain` to `ai.x.grok.bot`). Whether Grok Bot can add the connector by itself from that message is untested.
-- Revoking a device or a connector is not built yet: there is no `unlink_device` and no token list in the UI.
 
-## Next implementation step
-Add `parseToken`, `OwnerHub`, `Ticket` and `Gate`. Route `/enroll`, `/claim`, `/phone/*` and `/mcp` through token resolution, then make `buildServer(owner)` select the device per call.
+- Grok Bot has no deep link that adds an MCP server, so the handoff is a prefilled share (`ACTION_SEND text/plain` to `ai.x.grok.bot`). Whether Grok Bot adds the connector by itself from that message is untested.
+- Revoking a connector is not built. **Disconnect** in the app forgets the device token, but the old connectors stay valid. They reach a phone record that the app no longer answers, so their calls time out.

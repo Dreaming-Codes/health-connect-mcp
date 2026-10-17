@@ -13,21 +13,21 @@ Android Connect lets Grok Bot, or any MCP client, read and act on your Android p
 - Get the phone's location.
 - Read SMS and MMS threads, send texts, and reply to threads.
 - Search your contacts.
-- Reach several phones through one connector.
+- Connect several phones, each as its own connector.
 
 Each capability needs its own Android permission, and the app asks for each one on its own card.
 
 ## Documentation
 
 - [Tutorial: run your own Android Connect](docs/tutorial.md) sets up a Worker, a Firebase project, the app, and the Grok Bot connector from scratch.
-- [How-to guides](docs/how-to.md) cover each feature, extra phones, and release builds.
+- [How-to guides](docs/how-to.md) cover each feature, extra phones, upgrades, and release builds.
 - [MCP tool reference](docs/reference/tools.md) lists every tool and parameter. [Phone protocol reference](PROTOCOL.md) describes the Worker-to-phone messages.
 - [About the architecture and privacy](docs/architecture.md) explains how a request flows and what is stored where.
 - [Enrollment design](docs/enrollment.md) explains device tokens, connector tokens, and claim codes.
 
 ## Repository layout
 
-- `src/` holds the Worker: `index.ts` routes HTTP, `tools.ts` defines the MCP tools, `phone-hub.ts` is the per-phone Durable Object, and `access.ts` holds tokens, codes, and the owner and rate-limit Durable Objects.
+- `src/` holds the Worker: `index.ts` routes HTTP, `tools.ts` defines the MCP tools, `phone-hub.ts` is the per-phone Durable Object, and `access.ts` holds tokens, claim codes, and the claim-code and rate-limit Durable Objects.
 - `android/` holds the Kotlin and Jetpack Compose app. Its application id is `dev.dreamingcodes.hcmcp`.
 - `test/` holds the simulated-phone suite (`npm test`), the wire-contract snapshot (`npm run test:contract`), and the live emulator run (`test/live-emulator.mjs`).
 

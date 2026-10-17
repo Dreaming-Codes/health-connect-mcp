@@ -15,8 +15,8 @@ MCP client ──HTTPS, connector token──▶ Worker /mcp ──▶ PhoneHub 
 ```
 
 1. The MCP client calls a tool on `/mcp` with its connector token.
-2. The Worker finds the owner of the token and picks the phone: the `device` argument, or the phone seen most recently.
-3. That phone's `PhoneHub` sends a high-priority FCM data message with a request id, the method name, and the parameters.
+2. The token names its phone, and that phone's `PhoneHub` checks the token.
+3. The `PhoneHub` `PhoneHub` sends a high-priority FCM data message with a request id, the method name, and the parameters.
 4. Android wakes the app. The app runs the method within about 15 seconds and posts the result to `/phone/result/<id>` with its device token.
 5. `PhoneHub` matches the id to the waiting request and returns the result to the MCP client. If no answer arrives within `PUSH_TIMEOUT_MS` (20 seconds by default), the tool fails with a timeout.
 
@@ -26,9 +26,8 @@ Push is the only path. An earlier version kept a WebSocket open from a foregroun
 
 The Worker stores only what it needs to route and authenticate:
 
-- `PhoneHub`, per phone: the device token hash, the owner id, the device name, the FCM token, the app version, the last-seen time, the last push latency, and a cached Google OAuth token. It also keeps taps and replies on assistant notifications and call outcomes for 7 days, because `get_notification_responses` and `start_call` return them later.
-- `OwnerHub`, per owner: the list of device ids and the hashes of connector tokens.
-- `CodeTicket`, per claim or pairing code: the owner and device, until the code is used or 10 minutes pass.
+- `PhoneHub`, per phone: the device token hash, the connector token hashes, the device name, the FCM token, the app version, the last-seen time, the last push latency, and a cached Google OAuth token. It also keeps taps and replies on assistant notifications and call outcomes for 7 days, because `get_notification_responses` and `start_call` return them later.
+- `CodeTicket`, per claim code: the device id, until the code is used or 10 minutes pass.
 - `Gate`, per IP address: a counter for the enrollment and claim rate limits.
 
 The phone stores the Worker URL and the device token in `EncryptedSharedPreferences`. The notification index lives in memory and is gone when the process ends.
@@ -37,13 +36,13 @@ Neither side logs values. The app's status card shows only method names and time
 
 ## Why tokens carry their own scope
 
-A device token looks like `hcd_<device id>_<secret>`, and a connector token looks like `hco_<owner id>_<secret>`. The id part tells the Worker which Durable Object holds the hash, so the Worker needs no central table of tokens and no single object that every request touches. Only SHA-256 hashes of the secrets are stored.
+A device token looks like `hcd_<device id>_<secret>`, and a connector token looks like `hco_<device id>_<secret>`. The id part tells the Worker which Durable Object holds the hash, so the Worker needs no central table of tokens and no single object that every request touches. Only SHA-256 hashes of the secrets are stored.
 
 The kinds are separate on purpose. A device token cannot call `/mcp`, and a connector token cannot post as a phone. A stolen phone token therefore cannot read another phone, and a leaked connector cannot impersonate a phone.
 
 ## Why anyone can enroll
 
-Anyone who knows the Worker URL can tap **Connect** and get a device. That device always lands in a new, empty owner, so a stranger reaches only the phone they enrolled. Joining an existing owner needs a pairing code from one of its phones, or the owner's connector token. Rate limits cap the cost of empty owners at 10 enrollments and 20 claims per IP address per hour.
+Anyone who knows the Worker URL can tap **Connect** and enroll a phone. A connector reaches exactly one phone, and only that phone can issue the code that claims it, so a stranger reaches only the phone they enrolled. Rate limits cap the cost at 10 enrollments and 20 claims per IP address per hour.
 
 The alternative was a shared enrollment secret typed on every phone. That brings back the copy-a-secret step that enrollment removed, so the open design wins for a personal Worker. If you run a Worker for other people, watch its Durable Object usage.
 
@@ -55,6 +54,6 @@ Grok Bot has no deep link that adds an MCP connector, so **Register with Grok Bo
 
 FCM delivers a message only when the sender and the app belong to the same Firebase project. The released APK carries the maintainer's `google-services.json`, so only a Worker that holds the maintainer's service account can wake it. To use your own Worker, build the app with your own Firebase project. The [tutorial](tutorial.md) does exactly that.
 
-## Older setups keep working
+## One connector per phone
 
-Before enrollment, a Worker had one phone and one connector, set by the `DEVICE_TOKEN_HASH` and `MCP_TOKEN` secrets. Those secrets now map to a fixed legacy owner whose phone is the `phone` Durable Object. App 0.3.2 and connectors made with `MCP_TOKEN` keep working without changes, and new phones can join that owner through **Pair another phone**.
+Each phone gets its own connector, named after the phone. Version 0.6.0 could put several phones behind one connector with pairing codes, and it kept the single-phone `MCP_TOKEN` and `DEVICE_TOKEN_HASH` secrets. Version 0.7.0 removes both, so the Worker has one way to authenticate and no tool needs a device argument. [Enrollment](enrollment.md) describes the upgrade.

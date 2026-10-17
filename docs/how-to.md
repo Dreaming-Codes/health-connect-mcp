@@ -73,19 +73,20 @@ On the **Phone access** card, allow **Contacts**.
 
 The assistant calls `search_contacts` with a name or a number. With contacts access, `list_messages` and `list_threads` also show contact names.
 
-## Add another phone to the same connector
+## Add another phone
 
-1. On the connected phone, tap **Pair another phone**. The app shows a pairing code.
-2. On the new phone, enter the same **Worker URL** and tap **Link to an existing connector**.
-3. Type the pairing code and tap **Link this phone**.
+1. On the new phone, install the app, enter the same **Worker URL**, and tap **Connect**.
+2. Tap **Register with Grok Bot** and send the message.
 
-The code works once and expires after 10 minutes. The assistant sees both phones in `list_devices`. Every phone tool takes an optional `device`, which is a device id or a name. Without `device`, the tool uses the phone seen most recently.
+Grok Bot adds a second connector named after the new phone, for example `Android Connect (Pixel 9)`. Each connector reaches only its own phone.
 
-## Keep a single-phone setup from before 0.5.0
+## Upgrade a phone from 0.6.0 or earlier
 
-Earlier versions used two Worker secrets: `MCP_TOKEN` for the connector and `DEVICE_TOKEN_HASH` for the phone. Both still work. To set up a phone this way, tap **I have a device token**, paste the token, and tap **Connect**.
+Version 0.7.0 removes the `MCP_TOKEN` and `DEVICE_TOKEN_HASH` secrets and pairing. After the Worker is deployed, a phone set up with them must enroll again.
 
-To move that phone's connector to the new setup, keep the secrets and tap **Register with Grok Bot**. The new connector sees the same phone.
+1. Install app 0.7.0 and open it. The app shows the **Connect** form.
+2. Tap **Connect**, then tap **Register with Grok Bot**.
+3. In Grok Bot, remove the old Android Connect connector.
 
 ## Build a signed release with GitHub Actions
 
@@ -98,6 +99,6 @@ The workflow `.github/workflows/release.yml` builds and signs the APK when you p
    - `ANDROID_KEY_PASSWORD`: the key password.
    - `GOOGLE_SERVICES_JSON_BASE64`: `android/app/google-services.json`, base64-encoded.
 2. Set `versionName` and `versionCode` in `android/app/build.gradle.kts`, and commit.
-3. Push a tag that matches `versionName`, for example `git tag v0.6.0 && git push origin v0.6.0`.
+3. Push a tag that matches `versionName`, for example `git tag v0.7.0 && git push origin v0.7.0`.
 
 The workflow fails if the tag and `versionName` differ. Use the same keystore for every release, or Android refuses the update.
