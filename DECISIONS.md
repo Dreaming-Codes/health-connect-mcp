@@ -18,7 +18,7 @@ Forks decided without waiting for review, each with its reason. Change any of th
 - **No KVM on the box.** The API 35 emulator was too slow under software emulation (system_server ANRs), so the live run uses a lighter API 33 Google APIs image.
 
 ## Enrollment (PR #3)
-- **Self-routing tokens with per-owner and per-device Durable Objects**, rather than a central registry. See `docs/enrollment.md`.
+- **Self-routing tokens with per-owner and per-device Durable Objects**, rather than a central registry. Superseded in 0.7.0: owners are gone. See `docs/enrollment.md`.
 - **Anonymous enroll is allowed and rate-limited.** It always creates a new, empty owner, so the user only types the URL.
 - **MCP tokens are minted only by claim.** `/enroll` never returns an MCP token. Each claim creates a new connector token with a label, so no plaintext MCP token is stored anywhere.
 - **Grok Bot handoff is a prefilled share** (`ACTION_SEND text/plain` to `ai.x.grok.bot`). The decompiled app has `/v1/plugin/add?id=<marketplace plugin id>`, `/v1/dictate?id=<agent>`, `/v1/open` and `/v1/agent`. Each takes only a single `id`, and none accepts a URL, a header or text. The manifest has an `ACTION_SEND text/plain` filter on `MainActivity`, handled by `SharedTextIntent` and then `startText`.
@@ -45,3 +45,14 @@ Forks decided without waiting for review, each with its reason. Change any of th
 - **The debug receiver reports the same error codes as a push.** It now uses `errorJson`, so a `SecurityException` reads `permission_denied` instead of `SecurityException`. Only debug builds have the receiver, and no test reads its codes.
 - **`BridgeScreen` was not split further.** Its connect form and connection panel share most of their state. Hoisting them into parameters adds a layer without removing any, and no emulator was available to check the screen after the move. Only the claim-code dialog moved out.
 - **Location permission is checked per provider.** Before Android 12, the GPS provider needs fine location, so an approximate-only phone now uses the network provider. A `SecurityException` from `LocationManager` becomes `location_permission_missing`.
+
+## Enrollment only (0.7.0)
+- **One phone per connector.** `OwnerHub`, pairing codes, `list_devices` and the `device` argument are removed. Each phone's **Register with Grok Bot** claims its own connector, named `Android Connect (<device name>)`.
+- **Connector tokens live in the phone's `PhoneHub`.** A connector token is `hco_<device_id>_<secret>`, so the phone that issued the claim code also checks the token. No fact has two writers.
+- **The legacy secrets are gone.** The Worker no longer reads `MCP_TOKEN` or `DEVICE_TOKEN_HASH`. Deleting the secrets after deploy is a documented step, not something this PR does.
+- **`OwnerHub` is deleted by migration `v3`.** `deleted_classes` is one-way, and `docs/enrollment.md` has the rollback.
+- **`/admin/fcm-selftest` is removed.** It needed the `MCP_TOKEN` secret, and `get_phone_status` reports the last push latency.
+- **Claim tickets carry no kind.** A pairing code issued before the deploy also works on `/claim`, and it yields a connector for the phone that issued it. Only that phone could show the code, which is the same trust as a claim code, and it expires within 10 minutes.
+- **`/enroll` ignores `Authorization`.** It used to link a phone to the bearer's owner. Every enrollment now creates a new phone.
+- **An install without a device id shows the Connect form.** A 0.6.0 phone set up with a pasted device token has no device id, so it re-enrolls on first open of 0.7.0 instead of failing every push.
+- **Version 0.7.0.** Old phones and old connectors stop working, so the version moves up a minor step.
