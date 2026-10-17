@@ -1,9 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ShapeOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { z } from "zod";
-import { LEGACY_DEVICE, LEGACY_OWNER } from "./access";
-import { type Env, ownerHub, phoneHub } from "./env";
-import { PhoneError, type PhoneHub } from "./phone-hub";
+import type { PhoneHub } from "./phone-hub";
 import { bucket, inZone, iso, range } from "./time";
 
 const CALL_GRACE_S = 5;
@@ -16,36 +14,17 @@ const RECORD_TYPES = [
 
 type Hub = DurableObjectStub<PhoneHub>;
 type Args<S extends z.ZodRawShape> = ShapeOutput<S>;
-type DeviceSummary = { device_id: string; name: string | null; app_version: string | null; last_seen: string | null; push_registered: boolean };
 
 const smsText = z.string().min(1).max(5000).describe("Message text; long text is sent as a multipart SMS");
 const SMS_ONLY = "Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.";
 const notificationKey = z.string().min(1).describe("Notification key from list_notifications");
-const device = z.string().min(1).max(64).optional().describe("Device id or name from list_devices; default is the most recently seen device");
 
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }] });
 const failure = (e: unknown) => ({ isError: true, content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }] });
 
-async function listDevices(env: Env, ownerId: string): Promise<DeviceSummary[]> {
-  const linked = await ownerHub(env, ownerId).devices();
-  const ids = ownerId === LEGACY_OWNER ? [LEGACY_DEVICE, ...linked] : linked;
-  const all = await Promise.all(ids.map(async (id) => {
-    const s = await phoneHub(env, id).status();
-    return { device_id: id, name: s.name ?? s.device?.device ?? null, app_version: s.device?.app_version ?? null, last_seen: s.last_seen, push_registered: s.push_registered };
-  }));
-  return all.sort((a, b) => (b.last_seen ?? "").localeCompare(a.last_seen ?? ""));
-}
-
-export async function pickDevice(env: Env, ownerId: string, wanted?: string): Promise<Hub> {
-  const all = await listDevices(env, ownerId);
-  const hit = wanted === undefined ? all[0] : all.find((d) => d.device_id === wanted || d.name?.toLowerCase() === wanted.toLowerCase());
-  if (!hit) throw new PhoneError(wanted === undefined ? "no devices enrolled" : `unknown device "${wanted}"; known: ${all.map((d) => d.name ?? d.device_id).join(", ")}`);
-  return phoneHub(env, hit.device_id);
-}
-
-export function buildServer(env: Env, ownerId: string): McpServer {
+export function buildServer(hub: Hub): McpServer {
   const server = new McpServer({ name: "android-connect", version: "0.6.0" });
-  const register = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (args: Args<S>) => Promise<unknown>) =>
+  const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (args: Args<S>) => Promise<unknown>) =>
     server.registerTool(name, { description, inputSchema: shape as z.ZodRawShape }, async (args) => {
       try {
         // The SDK validated args against shape; TypeScript cannot follow its conditional callback type through a generic shape.
@@ -54,10 +33,8 @@ export function buildServer(env: Env, ownerId: string): McpServer {
         return failure(e);
       }
     });
-  const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (hub: Hub, args: Args<S>) => Promise<unknown>) =>
-    register(name, description, { ...shape, device }, async ({ device: wanted, ...args }) => run(await pickDevice(env, ownerId, wanted), args as Args<S>));
   const phone = <S extends z.ZodRawShape>(name: string, description: string, shape: S, params: (args: Args<S>) => unknown = (args) => args) =>
-    tool(name, description, shape, (hub, args) => hub.call(name, params(args)));
+    tool(name, description, shape, (args) => hub.call(name, params(args)));
   const health = <S extends z.ZodRawShape>(name: string, description: string, shape: S) =>
     phone(name, description, shape, (args) => inZone(args, "start", "end"));
 
@@ -130,7 +107,7 @@ export function buildServer(env: Env, ownerId: string): McpServer {
     since: iso.optional(),
     wait_seconds: z.number().int().min(0).max(20).default(0),
     timezone: range.timezone,
-  }, async (hub, args) => {
+  }, async (args) => {
     const since = args.since === undefined ? undefined : inZone(args, "since").since;
     return { responses: await hub.responses({ notification_id: args.notification_id, since }, args.wait_seconds * 1000) };
   });
@@ -139,7 +116,7 @@ export function buildServer(env: Env, ownerId: string): McpServer {
     caller_name: z.string().min(1).max(60).default("Grok Bot"),
     reason: z.string().min(1).max(140).describe("Why you are calling, shown under the caller name"),
     ring_seconds: z.number().int().min(5).max(60).default(30),
-  }, async (hub, args) => {
+  }, async (args) => {
     const call_id = `call-${crypto.randomUUID().slice(0, 12)}`;
     const ring = (await hub.call("start_call", { ...args, call_id })) as Record<string, unknown>;
     const [first] = await hub.responses({ notification_id: call_id }, (args.ring_seconds + CALL_GRACE_S) * 1000);
@@ -147,7 +124,7 @@ export function buildServer(env: Env, ownerId: string): McpServer {
     await hub.recordEvent({ notification_id: call_id, action_id: "missed", at: new Date().toISOString() });
     return { ...ring, call_id, outcome: "missed" };
   });
-  tool("get_phone_status", "Whether the phone is connected, last-seen time, app/permission info.", {}, async (hub) => {
+  tool("get_phone_status", "Whether the phone is connected, last-seen time, app/permission info.", {}, async () => {
     const s: Record<string, unknown> = { ...(await hub.status()) };
     if (s.push_registered) {
       try {
@@ -158,7 +135,5 @@ export function buildServer(env: Env, ownerId: string): McpServer {
     }
     return s;
   });
-  register("list_devices", "Phones this connector can reach. Pass a device_id or name as `device` to any tool; the default is the most recently seen device.", {},
-    async () => ({ devices: (await listDevices(env, ownerId)).map((d, i) => ({ ...d, default: i === 0 })) }));
   return server;
 }
