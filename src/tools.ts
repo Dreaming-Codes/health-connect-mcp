@@ -13,7 +13,6 @@ const RECORD_TYPES = [
 ] as const;
 
 type Hub = DurableObjectStub<PhoneHub>;
-type Args<S extends z.ZodRawShape> = ShapeOutput<S>;
 
 const smsText = z.string().min(1).max(5000).describe("Message text; long text is sent as a multipart SMS");
 const SMS_ONLY = "Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.";
@@ -27,16 +26,16 @@ const failure = (e: unknown) => ({ isError: true, content: [{ type: "text" as co
 
 export function buildServer(hub: Hub): McpServer {
   const server = new McpServer({ name: "android-connect", version: "0.7.0" });
-  const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (args: Args<S>) => Promise<unknown>) =>
+  const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (args: ShapeOutput<S>) => Promise<unknown>) =>
     server.registerTool(name, { description, inputSchema: shape as z.ZodRawShape }, async (args) => {
       try {
         // The SDK validated args against shape; TypeScript cannot follow its conditional callback type through a generic shape.
-        return text(await run(args as Args<S>));
+        return text(await run(args as ShapeOutput<S>));
       } catch (e) {
         return failure(e);
       }
     });
-  const phone = <S extends z.ZodRawShape>(name: string, description: string, shape: S, params: (args: Args<S>) => unknown = (args) => args) =>
+  const phone = <S extends z.ZodRawShape>(name: string, description: string, shape: S, params: (args: ShapeOutput<S>) => unknown = (args) => args) =>
     tool(name, description, shape, (args) => hub.call(name, params(args)));
   const health = <S extends z.ZodRawShape>(name: string, description: string, shape: S) =>
     phone(name, description, shape, (args) => inZone(args, "start", "end"));
