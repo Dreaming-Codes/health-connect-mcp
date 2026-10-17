@@ -9,11 +9,12 @@ const isoOrNull = (ms: number | undefined) => (ms ? new Date(ms).toISOString() :
 
 export class PhoneError extends Error {}
 
+const label = z.unknown().transform((v) => (typeof v === "string" && v ? v.slice(0, 100) : undefined));
 export const Registration = z.object({
   fcm_token: z.string().min(20),
-  app_version: z.unknown(),
-  device: z.unknown(),
-  mode: z.unknown(),
+  app_version: label,
+  device: label,
+  mode: label,
 });
 export type Registration = z.infer<typeof Registration>;
 
@@ -126,8 +127,7 @@ export class PhoneHub extends DurableObject<Env> {
 
   async register(info: Registration): Promise<void> {
     await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now() });
-    const str = (v: unknown) => (typeof v === "string" && v ? v.slice(0, 100) : undefined);
-    await this.ctx.storage.put("device", { app_version: str(info.app_version), device: str(info.device), mode: str(info.mode), ts: Date.now() } satisfies DeviceInfo);
+    await this.ctx.storage.put("device", { app_version: info.app_version, device: info.device, mode: info.mode, ts: Date.now() } satisfies DeviceInfo);
     await this.ctx.storage.put("lastSeen", Date.now());
   }
 
