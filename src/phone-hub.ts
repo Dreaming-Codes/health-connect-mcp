@@ -199,7 +199,6 @@ export class PhoneHub extends DurableObject<Env> {
       this.pending.set(id, { resolve, reject, timer, sentAt: Date.now() });
     });
     try {
-      // The push payload transits Google: request id, method and params only, never health data.
       await sendData(sa, await this.accessToken(sa), fcm.token, { id, method, params: JSON.stringify(params ?? {}) }, Math.ceil(timeoutMs / 1000), this.env.FCM_ENDPOINT);
     } catch (e: any) {
       const p = this.pending.get(id);

@@ -223,7 +223,6 @@ export function buildServer(env: Env, ownerId: string): McpServer {
       try {
         const phone: any = await hub.call("get_phone_status", {});
         s.phone = phone;
-        // Registration-time device info goes stale after app updates; the live answer wins.
         if (phone && typeof phone === "object") s.device = await hub.updateDevice({ app_version: phone.app_version, device: phone.device });
       } catch (e: any) { s.phone_error = String(e?.message ?? e); }
     }

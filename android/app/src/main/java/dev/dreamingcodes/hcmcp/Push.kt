@@ -3,6 +3,7 @@ package dev.dreamingcodes.hcmcp
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import androidx.annotation.WorkerThread
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -69,7 +70,7 @@ object WorkerApi {
     if (code != 200) throw IllegalStateException(errorOf(code, text))
   }
 
-  /** Blocking: call off the main thread. */
+  @WorkerThread
   fun register(ctx: Context, fcmToken: String? = null): String? {
     return try {
       val tok = fcmToken ?: Tasks.await(FirebaseMessaging.getInstance().token, 20, TimeUnit.SECONDS)
