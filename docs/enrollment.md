@@ -9,13 +9,13 @@ New phone:
    - `POST /enroll {name}` returns `{device_id, device_token, owner_id}`.
    - The app stores the token and registers FCM as before.
 2. App: tap **Register with Grok Bot**.
-   - `POST /device/connector-code` returns `{code, expires_at}`.
+   - `POST /phone/connector-code` returns `{code, expires_at}`.
    - Grok Bot is opened with a prefilled message: "Add the MCP connector for my phone: claim code K7QM-2XRA at https://…/claim".
 3. Grok Bot: `POST /claim {code}` returns `{name, mcp_url, headers: {Authorization: "Bearer hco_…"}}`.
    - The code works once and expires after 10 minutes.
 
 Second phone for the same connector:
-- Phone A: **Pair another phone** calls `POST /device/pairing-code` and shows `{code}`.
+- Phone A: **Pair another phone** calls `POST /phone/pairing-code` and shows `{code}`.
 - Phone B: enter the URL and that code. `POST /enroll {name, pairing_code}` joins A's owner.
 - Or, with the owner's MCP token: `POST /enroll` with `Authorization: Bearer <mcp token>`.
 
@@ -70,4 +70,4 @@ B is the base. A puts every request through one singleton, and it keeps device n
 - Revoking a device or a connector is not built yet: there is no `unlink_device` and no token list in the UI.
 
 ## Next implementation step
-Add `parseToken`, `OwnerHub`, `Ticket` and `Gate`. Route `/enroll`, `/claim`, `/device/*` and `/mcp` through token resolution, then make `buildServer(owner)` select the device per call.
+Add `parseToken`, `OwnerHub`, `Ticket` and `Gate`. Route `/enroll`, `/claim`, `/phone/*` and `/mcp` through token resolution, then make `buildServer(owner)` select the device per call.
