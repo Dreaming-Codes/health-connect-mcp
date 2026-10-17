@@ -16,8 +16,8 @@ class LocationHandler(private val ctx: Context) : MethodGroup {
   private val lm = ctx.getSystemService(LocationManager::class.java)
 
   private suspend fun locate(p: JSONObject): JSONObject {
-    if (!Capabilities.location(ctx)) throw PhoneFailure("location_permission_missing", "location permission is not granted; open the app and tap Allow location")
-    if (!Capabilities.backgroundLocation(ctx)) throw PhoneFailure("background_location_missing", "location is only allowed while the app is open; set it to Allow all the time")
+    Requirement.Location.check(ctx)
+    Requirement.BackgroundLocation.check(ctx)
     if (!lm.isLocationEnabled) throw PhoneFailure("location_disabled", "location is turned off on the phone")
     val maxAgeMs = p.optLong("max_age_s", 120).coerceIn(0, 86_400) * 1000
     val timeoutMs = p.optLong("timeout_s", 10).coerceIn(1, 12) * 1000

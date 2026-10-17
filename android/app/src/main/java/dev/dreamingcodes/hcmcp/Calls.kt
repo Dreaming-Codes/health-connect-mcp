@@ -99,7 +99,7 @@ class CallHandler(private val ctx: Context) : MethodGroup {
   private val nm = ctx.getSystemService(NotificationManager::class.java)
 
   private fun ring(p: JSONObject): JSONObject {
-    if (!Capabilities.canPostNotifications(ctx)) throw PhoneFailure("notifications_permission_missing", "the app may not post notifications; open the app and tap Allow notifications")
+    Requirement.PostNotifications.check(ctx)
     val now = System.currentTimeMillis()
     val call = IncomingCall.parse(p, now)
     Calls.channel(nm)

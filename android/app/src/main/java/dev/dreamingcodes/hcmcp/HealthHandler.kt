@@ -51,12 +51,11 @@ class HealthHandler(private val ctx: Context) : MethodGroup {
   private fun range(p: JSONObject): Range {
     fun inst(k: String): Instant = try { OffsetDateTime.parse(p.getString(k)).toInstant() }
       catch (e: Exception) { try { Instant.parse(p.getString(k)) } catch (e2: Exception) { throw BadParams("invalid $k") } }
-    val tz = try { ZoneId.of(p.optString("timezone", "Europe/Amsterdam")) } catch (e: Exception) { throw BadParams("invalid timezone") }
+    val tz = p.zone()
     val r = Range(inst("start"), inst("end"), tz)
     if (!r.end.isAfter(r.start)) throw BadParams("end must be after start")
     return r
   }
-  private fun iso(i: Instant, tz: ZoneId) = i.atZone(tz).toOffsetDateTime().toString()
 
   override val methods = mapOf(
     "get_phone_status" runs { status() },

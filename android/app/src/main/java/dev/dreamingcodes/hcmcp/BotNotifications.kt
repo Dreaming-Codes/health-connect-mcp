@@ -34,7 +34,7 @@ class BotNotifications(private val ctx: Context) : MethodGroup {
   private val nm = ctx.getSystemService(NotificationManager::class.java)
 
   private fun send(p: JSONObject): JSONObject {
-    if (!Capabilities.canPostNotifications(ctx)) throw PhoneFailure("notifications_permission_missing", "the app may not post notifications; open the app and tap Allow notifications")
+    Requirement.PostNotifications.check(ctx)
     val title = p.optString("title").ifEmpty { throw BadParams("title required") }
     val tag = p.optString("tag").ifEmpty { "n" + UUID.randomUUID().toString().take(8) }
     val alarm = p.optBoolean("alarm", false)

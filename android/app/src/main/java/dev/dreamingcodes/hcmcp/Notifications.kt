@@ -20,8 +20,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.Instant
-import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 
@@ -84,10 +82,8 @@ class NotificationHandler(private val ctx: Context) : MethodGroup {
   private fun find(key: String) = NotificationIndex.active[key] ?: throw PhoneFailure("not_found", "no active notification with that key")
 
   private fun list(p: JSONObject): JSONObject {
-    val tz = try { ZoneId.of(p.optString("timezone", "Europe/Amsterdam")) } catch (e: Exception) { throw BadParams("invalid timezone") }
-    val since = p.optString("since").takeIf { it.isNotEmpty() }?.let {
-      try { OffsetDateTime.parse(it).toInstant().toEpochMilli() } catch (e: Exception) { throw BadParams("invalid since") }
-    }
+    val tz = p.zone()
+    val since = p.instantMs("since")
     val pkg = p.optString("package").takeIf { it.isNotEmpty() }
     val limit = p.optInt("limit", 50).coerceIn(1, 200)
     val all = NotificationIndex.active.values.toList()
@@ -103,7 +99,7 @@ class NotificationHandler(private val ctx: Context) : MethodGroup {
     val title = x.getCharSequence(Notification.EXTRA_TITLE)?.toString()
     val text = x.getCharSequence(Notification.EXTRA_TEXT)?.toString()
     return JSONObject().put("key", sbn.key).put("package", sbn.packageName).put("app_label", appLabel(sbn.packageName))
-      .put("post_time", Instant.ofEpochMilli(sbn.postTime).atZone(tz).toOffsetDateTime().toString())
+      .put("post_time", iso(sbn.postTime, tz))
       .put("title", title).put("text", text).put("sub_text", x.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString())
       .put("category", n.category).put("ongoing", sbn.isOngoing).put("clearable", sbn.isClearable)
       .put("redacted", title in redactedMarkers || text in redactedMarkers)

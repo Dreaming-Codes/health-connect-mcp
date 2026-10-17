@@ -17,6 +17,17 @@ interface MethodGroup {
 
 fun Context.has(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
+enum class Requirement(private val code: String, private val message: String, val met: (Context) -> Boolean) {
+  PostNotifications("notifications_permission_missing", "the app may not post notifications; open the app and tap Allow notifications", Capabilities::canPostNotifications),
+  Location("location_permission_missing", "location permission is not granted; open the app and tap Allow location", Capabilities::location),
+  BackgroundLocation("background_location_missing", "location is only allowed while the app is open; set it to Allow all the time", Capabilities::backgroundLocation),
+  ReadSms("sms_permission_missing", "SMS read permission is not granted; open the app and tap Allow SMS", { it.has(Manifest.permission.READ_SMS) }),
+  SendSms("sms_permission_missing", "SMS send permission is not granted; open the app and tap Allow SMS", { it.has(Manifest.permission.SEND_SMS) }),
+  Contacts("contacts_permission_missing", "contacts permission is not granted; open the app and tap Allow contacts", { it.has(Manifest.permission.READ_CONTACTS) });
+
+  fun check(ctx: Context) { if (!met(ctx)) throw PhoneFailure(code, message) }
+}
+
 object Capabilities {
   val POST_NOTIFICATIONS = if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
   val LOCATION = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)

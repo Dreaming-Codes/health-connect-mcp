@@ -1,6 +1,5 @@
 package dev.dreamingcodes.hcmcp
 
-import android.Manifest
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -18,9 +17,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.Instant
-import java.time.OffsetDateTime
-import java.time.ZoneId
 import java.util.UUID
 
 enum class SmsBox(val smsType: Int?, val mmsBox: Int?) { all(null, null), inbox(1, 1), sent(2, 2) }
@@ -49,12 +45,7 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
   }
 
   private fun text(p: JSONObject) = p.optString("text").ifEmpty { throw BadParams("text required") }
-  private fun requireRead() { if (!ctx.has(Manifest.permission.READ_SMS)) throw PhoneFailure("sms_permission_missing", "SMS read permission is not granted; open the app and tap Allow SMS") }
-  private fun zone(p: JSONObject) = try { ZoneId.of(p.optString("timezone", "Europe/Amsterdam")) } catch (e: Exception) { throw BadParams("invalid timezone") }
-  private fun instantMs(p: JSONObject, k: String): Long? = p.optString(k).takeIf { it.isNotEmpty() }?.let {
-    try { OffsetDateTime.parse(it).toInstant().toEpochMilli() } catch (e: Exception) { throw BadParams("invalid $k") }
-  }
-  private fun iso(ms: Long, tz: ZoneId) = Instant.ofEpochMilli(ms).atZone(tz).toOffsetDateTime().toString()
+  private fun requireRead() = Requirement.ReadSms.check(ctx)
 
   private fun canonicalAddresses(): Map<Long, String> = cr.query(CANONICAL, arrayOf("_id", "address"), null, null, null)?.use { c ->
     buildMap { while (c.moveToNext()) put(c.getLong(0), c.getString(1)) }
@@ -73,7 +64,7 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
   }
 
   private fun listThreads(p: JSONObject): JSONObject {
-    val tz = zone(p); val names = ContactNames(ctx)
+    val tz = p.zone(); val names = ContactNames(ctx)
     val list = threads(limit = p.optInt("limit", 20).coerceIn(1, 100))
     return JSONObject().put("timezone", tz.id).put("threads", JSONArray(list.map { t ->
       JSONObject().put("thread_id", t.id).put("addresses", JSONArray(t.addresses))
@@ -83,12 +74,12 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
   }
 
   private fun listMessages(p: JSONObject): JSONObject {
-    val tz = zone(p); val names = ContactNames(ctx)
+    val tz = p.zone(); val names = ContactNames(ctx)
     val box = runCatching { SmsBox.valueOf(p.optString("box", "all")) }.getOrElse { throw BadParams("invalid box") }
     val limit = p.optInt("limit", 50).coerceIn(1, 500)
     val thread = p.optLong("thread_id", 0).takeIf { it > 0 }
     val digits = p.optString("address").filter { it.isDigit() }.takeLast(7).takeIf { it.isNotEmpty() }
-    val since = instantMs(p, "since"); val until = instantMs(p, "until")
+    val since = p.instantMs("since"); val until = p.instantMs("until")
     val messages = (sms(box, thread, digits, since, until, limit) + mms(box, thread, digits, since, until, limit)).sortedByDescending { it.date }.take(limit)
     return JSONObject().put("timezone", tz.id).put("count", messages.size).put("messages", JSONArray(messages.map { m ->
       JSONObject().put("id", m.id).put("kind", m.kind).put("thread_id", m.threadId).put("address", m.address)
@@ -134,7 +125,7 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
   }
 
   private suspend fun send(to: String, text: String): JSONObject {
-    if (!ctx.has(Manifest.permission.SEND_SMS)) throw PhoneFailure("sms_permission_missing", "SMS send permission is not granted; open the app and tap Allow SMS")
+    Requirement.SendSms.check(ctx)
     @Suppress("DEPRECATION")
     val sms = if (Build.VERSION.SDK_INT >= 31) ctx.getSystemService(SmsManager::class.java) else SmsManager.getDefault()
     val parts = sms.divideMessage(text)
