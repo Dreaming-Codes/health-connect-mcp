@@ -10,4 +10,4 @@ pid=$!
 trap 'kill -- -$pid 2>/dev/null; rm -rf "$state"' EXIT
 for _ in $(seq 60); do curl -sf "http://127.0.0.1:$port/" > /dev/null && break; sleep 1; done
 mcp=$(grep '^MCP_TOKEN=' .dev.vars | cut -d= -f2-)
-node test/contract.mjs "http://127.0.0.1:$port" "$mcp" "$device"
+node "$1" "http://127.0.0.1:$port" "$mcp" "$device"
