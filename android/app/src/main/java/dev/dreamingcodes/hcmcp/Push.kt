@@ -1,6 +1,8 @@
 package dev.dreamingcodes.hcmcp
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.annotation.WorkerThread
@@ -120,4 +122,12 @@ class PushService : FirebaseMessagingService() {
     BridgeState.set { it.copy(lastRequestAt = now, lastRequestMethod = method) }
   }
 
+}
+
+class AppUpdatedReceiver : BroadcastReceiver() {
+  override fun onReceive(ctx: Context, intent: Intent) {
+    if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED || !Settings.isConfigured(ctx)) return
+    val pending = goAsync()
+    Thread { try { WorkerApi.register(ctx) } finally { pending.finish() } }.start()
+  }
 }
