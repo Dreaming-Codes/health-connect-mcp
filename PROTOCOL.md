@@ -26,7 +26,9 @@ Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
 
 ### Common params
 `start`, `end`: always sent to the phone as ISO-8601 with an explicit offset (`2026-10-12T00:00:00+02:00`) or `Z`. The Worker accepts plain dates (`2026-10-12`) and local date-times without offset (`2026-10-12T08:00`) from MCP clients and normalizes them using `timezone`. Half-open `[start, end)`.
-`timezone`: IANA zone, default `Europe/Amsterdam`; used for day buckets and for formatting output times.
+`timezone`: IANA zone, default `Europe/Amsterdam`; used for day buckets and for formatting output times. Every tool that
+returns a time takes `timezone`, and every returned time is `YYYY-MM-DDTHH:mm:ss.SSS±HH:MM` in that zone, whether the
+phone or the Worker formats it.
 
 ### Methods and result shapes
 | method | extra params | result |
@@ -44,7 +46,7 @@ Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
 | `perform_notification_action` | `key`, `action` (index ≥ 0 or `"content"`), `replyText` | `{key, sent, opens_activity}` |
 | `send_notification` | `title`, `text`, `channel`, `importance` (min/low/default/high), `silent`, `alarm`, `insistent`, `vibrate`, `tag`, `actions[{id,label,reply?{placeholder}}]` ≤3 | `{notification_id, channel_id}`; alarms add `{alarm_volume, alarm_volume_max, bypass_dnd, dnd_filter, warning?}` |
 | `start_call` | `call_id`, `agent_id`, `caller_name`, `reason` ≤140, `ring_seconds` 5–60 | `{call_id, ringing, full_screen, grok_bot_installed}` |
-| `get_location` | `max_age_s`, `timeout_s` ≤12 | `{latitude, longitude, accuracy_m, altitude_m, speed_mps, bearing_deg, time, age_s, provider, source:"last_known"\|"current"}` |
+| `get_location` | `max_age_s`, `timeout_s` ≤12, `timezone` | `{latitude, longitude, accuracy_m, altitude_m, speed_mps, bearing_deg, time, age_s, provider, source:"last_known"\|"current"}` |
 | `list_threads` | `limit`, `timezone` | `{threads:[{thread_id, addresses, names, group, snippet, date, message_count, read}]}` |
 | `list_messages` | `thread_id`, `address`, `since`, `until`, `box` (all/inbox/sent), `limit` ≤500, `timezone` | `{count, messages:[{id, kind:"sms"\|"mms", thread_id, address, contact_name, box, date, text, read}]}` |
 | `send_message` | `to`, `text` | `{to, parts, sent, delivered, error_code}` |
@@ -87,8 +89,9 @@ Notification titles, text and replies are never logged by the Worker or the app.
 Taps, button presses, replies and call outcomes on notifications the bot sent. Body
 `{notification_id, action_id, reply_text?, at}` with the device token. `action_id` is a button id, `"content"`,
 `"dismissed"`, or for calls `"answered"`, `"declined"` (the Worker records `"missed"` itself). The Durable Object keeps
-events for 7 days; `get_notification_responses` reads them and can wait up to 20 s for the first one. `start_call`
-waits `ring_seconds + 5` s for its outcome.
+events for 7 days; `get_notification_responses` reads them and can wait up to 20 s for the first one. It returns the
+event's `at` as `phone_time` (the phone's clock at the tap) and `received_at` (the Worker's clock), both in `timezone`.
+`start_call` waits `ring_seconds + 5` s for its outcome and returns its `phone_time`.
 
 ### send_notification
 Channels are created on demand as `bot_<slug>_<importance>[_silent]`. Android freezes a channel's importance and sound
@@ -120,8 +123,8 @@ Other error codes: `notifications_permission_missing`, `channel_blocked`, `locat
 `contacts_permission_missing`. An app older than 0.4.0 answers new methods with `unknown_method`.
 
 
-`get_phone_status` (MCP) returns `{mode:"push"|"none", push_registered, push_registered_at, last_push:{latency_ms,at},
-last_seen, device}` plus `phone` (the phone's own answer, which takes one push round trip) when registered.
+`get_phone_status` (MCP) returns `{timezone, name, mode:"push"|"none", push_registered, push_registered_at,
+last_push:{latency_ms,at}, last_seen, device:{app_version, device, mode, updated_at}}` plus `phone` (the phone's own answer, which takes one push round trip) when registered.
 
 ## Enrollment
 Design and tradeoffs: `docs/enrollment.md`.

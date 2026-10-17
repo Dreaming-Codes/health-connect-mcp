@@ -12,6 +12,12 @@ function tzOffsetMs(ms: number, tz: string): number {
 }
 const offsetAtWallTime = (wall: number, tz: string) => tzOffsetMs(wall - tzOffsetMs(wall, tz), tz);
 const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
+const offsetText = (oMin: number) => `${oMin < 0 ? "-" : "+"}${pad(Math.trunc(Math.abs(oMin) / 60))}:${pad(Math.abs(oMin) % 60)}`;
+
+export function formatIn(ms: number, tz: string): string {
+  const oMin = Math.round(tzOffsetMs(ms, tz) / 60000);
+  return new Date(ms + oMin * 60000).toISOString().slice(0, 23) + offsetText(oMin);
+}
 
 function normalizeTime(s: string, tz: string): string {
   s = s.trim();
@@ -24,9 +30,7 @@ function normalizeTime(s: string, tz: string): string {
   const [y, mo, d, h = "0", mi = "0", se = "0", ms = "0"] = m.slice(1).map((v) => v ?? undefined) as string[];
   const wall = Date.UTC(+y, +mo - 1, +d, +h, +mi, +se, +ms.padEnd(3, "0"));
   const off = offsetAtWallTime(wall, tz);
-  const oMin = Math.round(off / 60000);
-  const sign = oMin < 0 ? "-" : "+";
-  return `${y}-${mo}-${d}T${pad(+h)}:${pad(+mi)}:${pad(+se)}${ms !== "0" ? "." + ms.padEnd(3, "0") : ""}${sign}${pad(Math.trunc(Math.abs(oMin) / 60))}:${pad(Math.abs(oMin) % 60)}`;
+  return `${y}-${mo}-${d}T${pad(+h)}:${pad(+mi)}:${pad(+se)}${ms !== "0" ? "." + ms.padEnd(3, "0") : ""}${offsetText(Math.round(off / 60000))}`;
 }
 
 function validTz(tz: string) {
@@ -37,8 +41,9 @@ export const iso = z.string().refine((s) => HAS_OFFSET.test(s.trim()) ? !Number.
 export const range = {
   start: iso.describe("Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00"),
   end: iso.describe("Exclusive end, same formats as start (a plain date means local midnight starting that day)"),
-  timezone: z.string().default(DEFAULT_TZ).describe(`IANA timezone used for day buckets (default ${DEFAULT_TZ})`),
+  timezone: z.string().default(DEFAULT_TZ).describe(`IANA timezone for day buckets and returned times (default ${DEFAULT_TZ})`),
 };
+export const timezone = z.string().default(DEFAULT_TZ).describe(`IANA timezone for returned times (default ${DEFAULT_TZ})`);
 export const bucket = z.enum(["none", "hour", "day"]).default("day").describe("Aggregation bucket");
 
 function zoneOf(args: { timezone?: string }): string {

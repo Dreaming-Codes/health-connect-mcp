@@ -21,7 +21,7 @@ Exercise/workout sessions (type, duration, calories, distance, avg HR).
 |---|---|---|---|---|
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `get_heart_rate`
 
@@ -31,7 +31,7 @@ Heart rate: min/avg/max per bucket, plus resting HR when available.
 |---|---|---|---|---|
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 | `bucket` | `none`, `hour`, `day` | no | `"day"` | Aggregation bucket |
 
 ## `get_location`
@@ -42,17 +42,18 @@ The phone's current location (GPS/network fix), or the last known fix if a fresh
 |---|---|---|---|---|
 | `max_age_s` | integer, ≥ 0, ≤ 86400 | no | `120` | Accept a cached fix up to this old instead of waiting for a new one |
 | `timeout_s` | integer, ≥ 1, ≤ 12 | no | `10` |  |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for returned times (default Europe/Amsterdam) |
 
 ## `get_notification_responses`
 
-Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response.
+Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response. phone_time is the phone's clock at the tap, and received_at is when the Worker got it.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `notification_id` | string, ≤ 64 chars | no |  | The tag returned by send_notification |
 | `since` | string | no |  |  |
 | `wait_seconds` | integer, ≥ 0, ≤ 20 | no | `0` |  |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for returned times (default Europe/Amsterdam) |
 
 ## `get_nutrition`
 
@@ -62,13 +63,15 @@ Nutrition entries and per-day totals (energy, macros).
 |---|---|---|---|---|
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `get_phone_status`
 
 Whether the phone is connected, its last-seen time, app version, battery_percent (0-100) and permissions.
 
-No parameters.
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for returned times (default Europe/Amsterdam) |
 
 ## `get_sleep`
 
@@ -78,7 +81,7 @@ Sleep sessions with stages and durations overlapping the range.
 |---|---|---|---|---|
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `get_steps`
 
@@ -88,7 +91,7 @@ Step counts from Health Connect, aggregated per bucket (live from the phone).
 |---|---|---|---|---|
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 | `bucket` | `none`, `hour`, `day` | no | `"day"` | Aggregation bucket |
 
 ## `get_weight`
@@ -99,7 +102,7 @@ Weight measurements (kg) in the range.
 |---|---|---|---|---|
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `list_messages`
 
@@ -113,7 +116,7 @@ SMS and MMS messages, newest first. Contact names are added when contacts permis
 | `until` | string | no |  |  |
 | `box` | `all`, `inbox`, `sent` | no | `"all"` |  |
 | `limit` | integer, ≥ 1, ≤ 500 | no | `50` |  |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `list_notifications`
 
@@ -124,7 +127,7 @@ Active notifications on the phone, newest first: app, title, text, and the actio
 | `package` | string | no |  | Only notifications from this Android package, e.g. com.whatsapp |
 | `since` | string | no |  | Only notifications posted at or after this time, same formats as start |
 | `limit` | integer, ≥ 1, ≤ 200 | no | `50` |  |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `list_threads`
 
@@ -133,7 +136,7 @@ SMS/MMS conversations, newest first, with the other party's address and the last
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `limit` | integer, ≥ 1, ≤ 100 | no | `20` |  |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 
 ## `perform_notification_action`
 
@@ -154,7 +157,7 @@ Generic raw read of any Health Connect record type in a time range.
 | `recordType` | `Steps`, `Distance`, `ActiveCaloriesBurned`, `TotalCaloriesBurned`, `FloorsClimbed`, `SleepSession`, `HeartRate`, `RestingHeartRate`, `HeartRateVariabilityRmssd`, `ExerciseSession`, `Weight`, `Height`, `BodyFat`, `Nutrition`, `Hydration`, `OxygenSaturation`, `RespiratoryRate`, `BloodPressure`, `BloodGlucose`, `BodyTemperature`, `Vo2Max`, `Speed`, `Power` | yes |  | Health Connect record type name |
 | `start` | string | yes |  | Inclusive start: 2026-10-12, 2026-10-12T08:00 (local, in `timezone`) or 2026-10-12T00:00:00+02:00 |
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone used for day buckets (default Europe/Amsterdam) |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 | `limit` | integer, ≥ 1, ≤ 1000 | no | `200` |  |
 
 ## `reply_to_thread`
@@ -215,3 +218,4 @@ Ring the phone like an incoming call from the assistant, with a full-screen call
 | `caller_name` | string, ≤ 60 chars | no | `"Grok Bot"` |  |
 | `reason` | string, ≤ 140 chars | yes |  | Why you are calling, shown under the caller name |
 | `ring_seconds` | integer, ≥ 5, ≤ 60 | no | `30` |  |
+| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for returned times (default Europe/Amsterdam) |

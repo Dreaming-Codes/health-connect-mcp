@@ -97,6 +97,10 @@ try {
   const t0 = Date.now();
   r = await call("get_notification_responses", { notification_id: "poll1", wait_seconds: 10 });
   check(r.json?.responses?.[0]?.reply_text === "sounds good" && Date.now() - t0 < 8000, "get_notification_responses long-polls until a reply arrives");
+  const zoned = (v, offset) => typeof v === "string" && v.endsWith(offset) && !Number.isNaN(Date.parse(v));
+  r = await call("get_notification_responses", { notification_id: "poll1", timezone: "America/Los_Angeles" });
+  const resp = r.json?.responses?.[0] ?? {};
+  check(zoned(resp.phone_time, "-07:00") && zoned(resp.received_at, "-07:00") && !("at" in resp), "get_notification_responses gives phone_time and received_at in the timezone");
   check((await post("/phone/event", { notification_id: "poll1" })).status === 400, "malformed event is rejected");
   check((await fetch(base + "/phone/event", { method: "POST", headers: { Authorization: "Bearer nope" }, body: "{}" })).status === 401, "event needs the device token");
 
@@ -104,14 +108,19 @@ try {
   check(!r.error && last().params.alarm === true && last().params.insistent === true, "alarm notification forwards alarm and insistent");
 
   r = await call("start_call", { agent_id: "answer-me", reason: "Your 9:00 starts in 5 minutes", ring_seconds: 5 });
-  check(r.json?.outcome === "answered" && r.json.call_id?.startsWith("call-"), "start_call waits for answered");
+  check(r.json?.outcome === "answered" && r.json.call_id?.startsWith("call-") && zoned(r.json.phone_time, "+02:00"), "start_call waits for answered");
+  check(!("timezone" in last().params), "start_call keeps timezone on the Worker");
   r = await call("start_call", { agent_id: "nobody", reason: "Ping", ring_seconds: 5 });
   check(r.json?.outcome === "missed", "start_call reports missed after ring_seconds + grace");
   r = await call("start_call", { agent_id: "bad id!", reason: "x" });
   check(r.error, "start_call rejects an invalid agent_id");
 
   r = await call("get_location", {});
-  check(!r.error && r.json.latitude === 52.37 && last().params.max_age_s === 120, "get_location round trip with defaults");
+  check(!r.error && r.json.latitude === 52.37 && last().params.max_age_s === 120 && last().params.timezone === "Europe/Amsterdam", "get_location round trip with defaults");
+  r = await call("get_phone_status", { timezone: "Asia/Tokyo" });
+  check(r.json?.timezone === "Asia/Tokyo" && zoned(r.json.last_seen, "+09:00") && zoned(r.json.push_registered_at, "+09:00") && zoned(r.json.last_push?.at, "+09:00") && zoned(r.json.device?.updated_at, "+09:00") && !("ts" in r.json.device), "get_phone_status times follow timezone");
+  r = await call("get_phone_status", { timezone: "Mars/Olympus" });
+  check(r.error && r.text.includes("invalid timezone"), "get_phone_status rejects an invalid timezone");
   r = await call("list_messages", { since: "2026-10-12", until: "2026-10-13", box: "inbox" });
   check(!r.error && last().params.since === "2026-10-12T00:00:00+02:00" && last().params.until === "2026-10-13T00:00:00+02:00", "list_messages normalizes since/until");
   r = await call("list_messages", { since: "2026-10-13", until: "2026-10-12" });

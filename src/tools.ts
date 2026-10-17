@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ShapeOutput } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { z } from "zod";
-import type { PhoneHub } from "./phone-hub";
-import { bucket, inZone, iso, range } from "./time";
+import type { PhoneHub, StoredEvent } from "./phone-hub";
+import { bucket, formatIn, inZone, iso, range, timezone } from "./time";
 
 const CALL_GRACE_S = 5;
 
@@ -21,6 +21,8 @@ const notificationKey = z.string().min(1).describe("Notification key from list_n
 const notificationTag = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
 
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }] });
+const response = ({ at, received_at, ...e }: StoredEvent, tz: string) =>
+  ({ ...e, phone_time: formatIn(Date.parse(at), tz), received_at: formatIn(Date.parse(received_at), tz) });
 const failure = (e: unknown) => ({ isError: true, content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }] });
 
 export function buildServer(hub: Hub): McpServer {
@@ -90,7 +92,8 @@ export function buildServer(hub: Hub): McpServer {
   phone("get_location", "The phone's current location (GPS/network fix), or the last known fix if a fresh one is not available in time.", {
     max_age_s: z.number().int().min(0).max(86400).default(120).describe("Accept a cached fix up to this old instead of waiting for a new one"),
     timeout_s: z.number().int().min(1).max(12).default(10),
-  });
+    timezone,
+  }, (args) => inZone(args));
   phone("list_threads", `SMS/MMS conversations, newest first, with the other party's address and the last message snippet. ${SMS_ONLY}`,
     { limit: z.number().int().min(1).max(100).default(20), timezone: range.timezone }, (args) => inZone(args));
   phone("list_messages", `SMS and MMS messages, newest first. Contact names are added when contacts permission is granted. MMS returns text parts only. ${SMS_ONLY}`, {
@@ -109,35 +112,39 @@ export function buildServer(hub: Hub): McpServer {
   phone("search_contacts", "Find contacts by name or phone number. Returns names, phone numbers with their type, and email addresses.",
     { query: z.string().min(1).max(100), limit: z.number().int().min(1).max(50).default(10) });
 
-  tool("get_notification_responses", "Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response.", {
+  tool("get_notification_responses", "Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response. phone_time is the phone's clock at the tap, and received_at is when the Worker got it.", {
     notification_id: z.string().min(1).max(64).optional().describe("The tag returned by send_notification"),
     since: iso.optional(),
     wait_seconds: z.number().int().min(0).max(20).default(0),
-    timezone: range.timezone,
+    timezone,
   }, async (args) => {
-    const since = args.since === undefined ? undefined : inZone(args, "since").since;
-    return { responses: await hub.responses({ notification_id: args.notification_id, since }, args.wait_seconds * 1000) };
+    const { since, timezone: tz } = inZone(args, "since");
+    const found = await hub.responses({ notification_id: args.notification_id, since }, args.wait_seconds * 1000);
+    return { timezone: tz, responses: found.map((e) => response(e, tz)) };
   });
   tool("start_call", "Ring the phone like an incoming call from the assistant, with a full-screen call screen and Answer/Decline. Answer unlocks the phone and opens a Grok Bot voice call with agent_id. Waits until the call is answered, declined or missed (ring_seconds plus 5 s at most).", {
     agent_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).describe("Grok Bot agent id the voice call opens"),
     caller_name: z.string().min(1).max(60).default("Grok Bot"),
     reason: z.string().min(1).max(140).describe("Why you are calling, shown under the caller name"),
     ring_seconds: z.number().int().min(5).max(60).default(30),
-  }, async (args) => {
+    timezone,
+  }, async ({ timezone: zone, ...args }) => {
+    const tz = inZone({ timezone: zone }).timezone;
     const call_id = `call-${crypto.randomUUID().slice(0, 12)}`;
     const ring = (await hub.call("start_call", { ...args, call_id })) as Record<string, unknown>;
     const [first] = await hub.responses({ notification_id: call_id }, (args.ring_seconds + CALL_GRACE_S) * 1000);
-    if (first) return { ...ring, call_id, outcome: first.action_id, at: first.at };
+    if (first) return { ...ring, call_id, outcome: first.action_id, phone_time: formatIn(Date.parse(first.at), tz) };
     await hub.recordEvent({ notification_id: call_id, action_id: "missed", at: new Date().toISOString() });
     return { ...ring, call_id, outcome: "missed" };
   });
-  tool("get_phone_status", "Whether the phone is connected, its last-seen time, app version, battery_percent (0-100) and permissions.", {}, async () => {
-    const s: Record<string, unknown> = { ...(await hub.status()) };
+  tool("get_phone_status", "Whether the phone is connected, its last-seen time, app version, battery_percent (0-100) and permissions.", { timezone }, async (args) => {
+    const tz = inZone(args).timezone;
+    const s: Record<string, unknown> = { timezone: tz, ...(await hub.status(tz)) };
     if (s.push_registered) {
       try {
         const phone: any = await hub.call("get_phone_status", {});
         s.phone = phone;
-        if (phone && typeof phone === "object") s.device = await hub.updateDevice({ app_version: phone.app_version, device: phone.device });
+        if (phone && typeof phone === "object") s.device = await hub.updateDevice({ app_version: phone.app_version, device: phone.device }, tz);
       } catch (e) { s.phone_error = e instanceof Error ? e.message : String(e); }
     }
     return s;

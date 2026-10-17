@@ -10,7 +10,7 @@ import android.os.CancellationSignal
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.time.Instant
+import java.time.ZoneId
 import kotlin.coroutines.resume
 
 class LocationHandler(private val ctx: Context) : MethodGroup {
@@ -23,12 +23,13 @@ class LocationHandler(private val ctx: Context) : MethodGroup {
     if (!lm.isLocationEnabled) throw PhoneFailure("location_disabled", "location is turned off on the phone")
     val maxAgeMs = p.optLong("max_age_s", 120).coerceIn(0, 86_400) * 1000
     val timeoutMs = p.optLong("timeout_s", 10).coerceIn(1, 12) * 1000
+    val tz = p.zone()
     val last = lastKnown()
-    if (last != null && ageMs(last) <= maxAgeMs) return describe(last, "last_known")
+    if (last != null && ageMs(last) <= maxAgeMs) return describe(last, "last_known", tz)
     val current = withTimeoutOrNull(timeoutMs) { current() }
     return when {
-      current != null -> describe(current, "current")
-      last != null -> describe(last, "last_known")
+      current != null -> describe(current, "current", tz)
+      last != null -> describe(last, "last_known", tz)
       else -> throw PhoneFailure("location_unavailable", "no location fix within ${timeoutMs / 1000}s and no cached fix")
     }
   }
@@ -70,12 +71,12 @@ class LocationHandler(private val ctx: Context) : MethodGroup {
 
   private fun ageMs(l: Location) = System.currentTimeMillis() - l.time
 
-  private fun describe(l: Location, source: String) = JSONObject()
+  private fun describe(l: Location, source: String, tz: ZoneId) = JSONObject()
     .put("latitude", l.latitude).put("longitude", l.longitude)
     .put("accuracy_m", if (l.hasAccuracy()) l.accuracy.toDouble() else null)
     .put("altitude_m", if (l.hasAltitude()) l.altitude else null)
     .put("speed_mps", if (l.hasSpeed()) l.speed.toDouble() else null)
     .put("bearing_deg", if (l.hasBearing()) l.bearing.toDouble() else null)
-    .put("time", Instant.ofEpochMilli(l.time).toString()).put("age_s", ageMs(l) / 1000)
+    .put("time", iso(l.time, tz)).put("age_s", ageMs(l) / 1000)
     .put("provider", l.provider).put("source", source)
 }

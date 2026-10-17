@@ -53,7 +53,7 @@ for (const [n, a] of [["get_steps", r], ["get_steps", { start: "13/10/2026", end
   ["get_steps", { ...r, timezone: "Mars/Base" }], ["read_records", { ...r, recordType: "Bogus" }], ["get_phone_status", {}],
   ...branchCases]) {
   const res = await c.callTool({ name: n, arguments: a });
-  out.push([n, a, res.isError ?? false, res.content[0].text.replace(/"(push_registered_at|last_seen|ts|at)": [^,}\n]+/g, '"$1": X')]);
+  out.push([n, a, res.isError ?? false, res.content[0].text.replace(/"(push_registered_at|last_seen|updated_at|ts|at|phone_time|received_at)": [^,}\n]+/g, '"$1": X')]);
 }
 await c.close();
 console.log(JSON.stringify(out, null, 1));
