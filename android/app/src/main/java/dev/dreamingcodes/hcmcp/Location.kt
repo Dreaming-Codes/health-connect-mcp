@@ -47,7 +47,6 @@ class LocationHandler(private val ctx: Context) : MethodGroup {
     try { lm.getLastKnownLocation(provider) } catch (e: SecurityException) { throw locationDenied() }
   }.maxByOrNull { it.time }
 
-  @Suppress("DEPRECATION")
   private suspend fun current(): Location? {
     val provider = providers().firstOrNull() ?: return null
     return suspendCancellableCoroutine { cont ->
@@ -59,6 +58,7 @@ class LocationHandler(private val ctx: Context) : MethodGroup {
         } else {
           val listener = android.location.LocationListener { if (cont.isActive) cont.resume(it) }
           cont.invokeOnCancellation { lm.removeUpdates(listener) }
+          @Suppress("DEPRECATION")
           lm.requestSingleUpdate(provider, listener, ctx.mainLooper)
         }
       } catch (e: SecurityException) {
