@@ -3,7 +3,15 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  "durable_objects": { "bindings": [{ "name": "PHONE", "class_name": "PhoneHub" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PhoneHub"] }],
+  "durable_objects": { "bindings": [
+    { "name": "PHONE", "class_name": "PhoneHub" },
+    { "name": "OWNER", "class_name": "OwnerHub" },
+    { "name": "TICKET", "class_name": "CodeTicket" },
+    { "name": "GATE", "class_name": "Gate" }
+  ] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PhoneHub"] },
+    { "tag": "v2", "new_sqlite_classes": ["OwnerHub", "CodeTicket", "Gate"] }
+  ],
   "observability": { "enabled": true }
 }

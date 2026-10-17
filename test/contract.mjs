@@ -13,6 +13,19 @@ await http("register no fcm", "/phone/register", dev("{}"));
 await http("register short fcm", "/phone/register", dev(JSON.stringify({ fcm_token: "short" })));
 await http("result unknown", "/phone/result/abc", dev(JSON.stringify({ result: 1 })));
 await http("result array", "/phone/result/abc", dev("[]"));
+if (!process.env.CONTRACT_BASELINE) {
+  const anon = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body });
+  await http("enroll GET", "/enroll");
+  await http("enroll no name", "/enroll", anon("{}"));
+  await http("enroll bad pairing code", "/enroll", anon(JSON.stringify({ name: "x", pairing_code: "AAAA-AAAA" })));
+  await http("enroll wrong bearer", "/enroll", { ...anon(JSON.stringify({ name: "x" })), headers: { Authorization: "Bearer nope", "content-type": "application/json" } });
+  await http("claim bad code", "/claim", anon(JSON.stringify({ code: "nope" })));
+  await http("claim unknown code", "/claim?code=AAAA-AAAA");
+  await http("connector-code no auth", "/phone/connector-code", anon("{}"));
+  await http("pairing-code no auth", "/phone/pairing-code", anon("{}"));
+  await http("rename no auth", "/phone/name", anon(JSON.stringify({ name: "x" })));
+  await http("rename empty", "/phone/name", dev(JSON.stringify({ name: " " })));
+}
 const c = await connect(base, mcpToken);
 out.push(["tools", (await c.listTools()).tools]);
 const r = { start: "2026-10-10", end: "2026-10-13" };
@@ -35,6 +48,7 @@ const branchCases = process.env.CONTRACT_BASELINE ? [] : [
   ["send_message", { to: "+31 6 1234 5678", text: "hi" }], ["send_message", { to: "abc", text: "hi" }], ["send_message", { to: "+316", text: "" }],
   ["reply_to_thread", { thread_id: 3, text: "hi" }], ["reply_to_thread", { thread_id: 0, text: "hi" }],
   ["search_contacts", { query: "Ann" }], ["search_contacts", { query: "" }],
+  ["list_devices", {}], ["get_steps", { ...r, device: "phone" }], ["get_steps", { ...r, device: "nope" }], ["get_steps", { ...r, device: "" }],
 ];
 for (const [n, a] of [["get_steps", r], ["get_steps", { start: "13/10/2026", end: "2026-10-14" }], ["get_steps", { start: "2026-10-13", end: "2026-10-12" }],
   ["get_steps", { ...r, timezone: "Mars/Base" }], ["read_records", { ...r, recordType: "Bogus" }], ["get_phone_status", {}],
