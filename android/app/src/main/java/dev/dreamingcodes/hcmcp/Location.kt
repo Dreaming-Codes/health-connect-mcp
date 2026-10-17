@@ -1,6 +1,8 @@
 package dev.dreamingcodes.hcmcp
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
@@ -34,26 +36,37 @@ class LocationHandler(private val ctx: Context) : MethodGroup {
   private fun providers(): List<String> = buildList {
     if (Build.VERSION.SDK_INT >= 31 && lm.hasProvider(LocationManager.FUSED_PROVIDER)) add(LocationManager.FUSED_PROVIDER)
     add(LocationManager.GPS_PROVIDER); add(LocationManager.NETWORK_PROVIDER)
-  }.filter { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
+  }.filter { permitted(it) && runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
 
-  @Suppress("MissingPermission")
-  private fun lastKnown(): Location? = providers().mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }.maxByOrNull { it.time }
+  // Before Android 12, the GPS provider throws SecurityException for an app with only approximate location.
+  private fun permitted(provider: String) =
+    Build.VERSION.SDK_INT >= 31 || provider != LocationManager.GPS_PROVIDER || ctx.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-  @Suppress("MissingPermission", "DEPRECATION")
+  private fun lastKnown(): Location? = providers().mapNotNull { provider ->
+    try { lm.getLastKnownLocation(provider) } catch (e: SecurityException) { throw locationDenied() }
+  }.maxByOrNull { it.time }
+
+  @Suppress("DEPRECATION")
   private suspend fun current(): Location? {
     val provider = providers().firstOrNull() ?: return null
     return suspendCancellableCoroutine { cont ->
-      if (Build.VERSION.SDK_INT >= 30) {
-        val cancel = CancellationSignal()
-        cont.invokeOnCancellation { cancel.cancel() }
-        lm.getCurrentLocation(provider, cancel, ctx.mainExecutor) { cont.resume(it) }
-      } else {
-        val listener = android.location.LocationListener { if (cont.isActive) cont.resume(it) }
-        cont.invokeOnCancellation { lm.removeUpdates(listener) }
-        lm.requestSingleUpdate(provider, listener, ctx.mainLooper)
+      try {
+        if (Build.VERSION.SDK_INT >= 30) {
+          val cancel = CancellationSignal()
+          cont.invokeOnCancellation { cancel.cancel() }
+          lm.getCurrentLocation(provider, cancel, ctx.mainExecutor) { cont.resume(it) }
+        } else {
+          val listener = android.location.LocationListener { if (cont.isActive) cont.resume(it) }
+          cont.invokeOnCancellation { lm.removeUpdates(listener) }
+          lm.requestSingleUpdate(provider, listener, ctx.mainLooper)
+        }
+      } catch (e: SecurityException) {
+        throw locationDenied()
       }
     }
   }
+
+  private fun locationDenied() = PhoneFailure("location_permission_missing", "location permission was revoked or does not cover this provider; open the app and tap Allow location")
 
   private fun ageMs(l: Location) = System.currentTimeMillis() - l.time
 
