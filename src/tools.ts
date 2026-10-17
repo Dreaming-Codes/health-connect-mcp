@@ -183,7 +183,7 @@ const device = z.string().min(1).max(64).optional().describe("Device id or name 
 const failure = (e: any) => ({ isError: true, content: [{ type: "text" as const, text: String(e?.message ?? e) }] });
 
 export function buildServer(env: Env, ownerId: string): McpServer {
-  const server = new McpServer({ name: "health-connect", version: "0.2.0" });
+  const server = new McpServer({ name: "android-connect", version: "0.6.0" });
   const tool = <A,>(name: string, description: string, shape: z.ZodRawShape, run: (hub: Hub, args: A) => Promise<unknown>) =>
     server.registerTool(name, { description, inputSchema: { ...shape, device } }, async ({ device: wanted, ...args }: any) => {
       try {

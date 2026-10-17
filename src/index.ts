@@ -150,7 +150,7 @@ export default {
       await buildServer(env, ownerId).connect(transport);
       return transport.handleRequest(req);
     }
-    if (pathname === "/") return new Response("health-connect-mcp ok\n");
+    if (pathname === "/") return new Response("android-connect ok\n");
     return new Response("not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

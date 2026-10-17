@@ -245,7 +245,7 @@ fun BridgeScreen() {
   }
 
   Scaffold(
-    topBar = { LargeTopAppBar(title = { Text("Health Connect Bridge") }) },
+    topBar = { LargeTopAppBar(title = { Text("Android Connect") }) },
     snackbarHost = { SnackbarHost(snackbar) },
     contentWindowInsets = WindowInsets.safeDrawing,
   ) { inner ->
@@ -371,7 +371,7 @@ fun BridgeScreen() {
         }
       }
 
-      Text("Only method names and times are shown here. Health values, notifications, messages, contacts and locations are never logged or stored by the bridge.",
+      Text("Only method names and times are shown here. Health values, notifications, messages, contacts and locations are never logged or stored by the app.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Spacer(Modifier.height(8.dp))

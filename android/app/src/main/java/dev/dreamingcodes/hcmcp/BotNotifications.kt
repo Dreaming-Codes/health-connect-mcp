@@ -123,9 +123,9 @@ object BotEvents {
     Thread {
       try {
         val (code, _) = WorkerApi.post(ctx, "/phone/event", event)
-        Log.i("HCBridge", "notification event -> HTTP $code")
+        Log.i(TAG, "notification event -> HTTP $code")
       } catch (e: Exception) {
-        Log.w("HCBridge", "notification event post failed: ${e.javaClass.simpleName}")
+        Log.w(TAG, "notification event post failed: ${e.javaClass.simpleName}")
       } finally { done() }
     }.start()
   }

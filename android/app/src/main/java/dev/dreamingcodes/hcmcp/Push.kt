@@ -17,7 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-private const val TAG = "HCBridge"
+const val TAG = "AndroidConnect"
 
 data class Enrollment(val deviceId: String, val deviceToken: String, val linked: Boolean) {
   companion object {
