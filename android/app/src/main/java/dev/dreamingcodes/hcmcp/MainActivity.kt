@@ -3,14 +3,11 @@ package dev.dreamingcodes.hcmcp
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -44,10 +41,6 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.PermissionController
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -81,14 +74,6 @@ fun AppTheme(content: @Composable () -> Unit) {
   MaterialTheme(colorScheme = scheme, content = content)
 }
 
-private data class Access(val postNotifications: Boolean = false, val dnd: Boolean = false, val fullScreen: Boolean = false,
-  val location: Boolean = false, val backgroundLocation: Boolean = false, val sms: Boolean = false, val contacts: Boolean = false)
-
-private fun readAccess(ctx: Context) = Access(Capabilities.canPostNotifications(ctx), Capabilities.dndAccess(ctx), Calls.canFullScreen(ctx),
-  Capabilities.location(ctx), Capabilities.backgroundLocation(ctx), Capabilities.SMS.all { ctx.has(it) }, Capabilities.CONTACTS.all { ctx.has(it) })
-
-private data class HcInfo(val sdk: Int, val granted: Int, val total: Int, val backgroundAvailable: Boolean, val backgroundGranted: Boolean)
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun BridgeScreen() {
@@ -116,20 +101,10 @@ fun BridgeScreen() {
   var setupY by remember { mutableIntStateOf(0) }
   val urlFocus = remember { FocusRequester() }
   val tokenFocus = remember { FocusRequester() }
-  var hc by remember { mutableStateOf<HcInfo?>(null) }
-  var notificationAccess by remember { mutableStateOf(false) }
-  var access by remember { mutableStateOf(Access()) }
-  var deniedOnce by rememberSaveable { mutableStateOf(false) }
-  val listenerConnected by NotificationIndex.listener.collectAsState()
   var lastReq by remember { mutableStateOf<Pair<Long, String>?>(null) }
   var tick by remember { mutableIntStateOf(0) }
 
-  suspend fun refresh() {
-    hc = withContext(Dispatchers.IO) { readHc(ctx) }
-    notificationAccess = NotificationIndex.accessGranted(ctx)
-    access = readAccess(ctx)
-    lastReq = withContext(Dispatchers.IO) { Settings.lastRequest(ctx) }
-  }
+  OnResume { lastReq = withContext(Dispatchers.IO) { Settings.lastRequest(ctx) } }
   LaunchedEffect(Unit) {
     withContext(Dispatchers.IO) {
       val u = Settings.workerUrl(ctx); val t = Settings.deviceToken(ctx)
@@ -138,26 +113,9 @@ fun BridgeScreen() {
       val pa = Settings.pushRegisteredAt(ctx); val pe = Settings.pushError(ctx)
       BridgeState.set { it.copy(pushRegisteredAt = it.pushRegisteredAt ?: pa, pushError = it.pushError ?: pe) }
     }
-    refresh()
   }
   LaunchedEffect(Unit) { while (true) { delay(15_000); tick++ } }
-  val lifecycle = LocalLifecycleOwner.current.lifecycle
-  DisposableEffect(lifecycle) {
-    val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) scope.launch { refresh() } }
-    lifecycle.addObserver(obs); onDispose { lifecycle.removeObserver(obs) }
-  }
   LaunchedEffect(status.lastRequestAt) { status.lastRequestAt?.let { lastReq = it to (status.lastRequestMethod ?: "") } }
-
-  val permLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { scope.launch { refresh() } }
-  val runtimeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
-    if (res.values.any { !it }) deniedOnce = true
-    scope.launch { refresh() }
-  }
-  fun open(action: String, withPackage: Boolean = false) {
-    val i = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    if (withPackage) i.data = Uri.parse("package:${ctx.packageName}")
-    runCatching { ctx.startActivity(i) }
-  }
 
   val configured = savedUrl.isNotBlank() && savedToken.isNotBlank()
 
@@ -312,64 +270,9 @@ fun BridgeScreen() {
         }
       }
 
-      ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          SectionTitle(Icons.Outlined.FavoriteBorder, "Health Connect")
-          val h = hc
-          when {
-            h == null -> Text("Checking…")
-            h.sdk != HealthConnectClient.SDK_AVAILABLE -> {
-              Text("Health Connect is not available or needs an update.", color = MaterialTheme.colorScheme.error)
-              OutlinedButton(onClick = {
-                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-              }) { Text("Get Health Connect") }
-            }
-            else -> {
-              CheckRow(h.granted == h.total, "Read access: ${h.granted} of ${h.total} data types")
-              if (h.backgroundAvailable) CheckRow(h.backgroundGranted, "Background reads ${if (h.backgroundGranted) "allowed" else "not allowed"}")
-              else CheckRow(true, "Background reads: not needed on this Android version")
-              val allOk = h.granted == h.total && (!h.backgroundAvailable || h.backgroundGranted)
-              if (allOk) TextButton(onClick = { permLauncher.launch(HealthHandler.requestedPermissions(h.backgroundAvailable)) }) { Text("Review permissions") }
-              else Button(onClick = { permLauncher.launch(HealthHandler.requestedPermissions(h.backgroundAvailable)) }, modifier = Modifier.fillMaxWidth()) { Text("Grant permissions") }
-            }
-          }
-        }
-      }
-
-      ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          SectionTitle(Icons.Outlined.Notifications, "Notifications")
-          CheckRow(notificationAccess, if (notificationAccess) "Notification access granted" else "Notification access not granted")
-          if (notificationAccess) CheckRow(listenerConnected != null, if (listenerConnected != null) "Listener connected" else "Listener not connected yet")
-          val openSettings = { ctx.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-          if (notificationAccess) TextButton(onClick = openSettings) { Text("Review notification access") }
-          else Button(onClick = openSettings, modifier = Modifier.fillMaxWidth()) { Text("Grant notification access") }
-          Text("Lets your assistant read, dismiss and act on notifications, including replies.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-      }
-
-      ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          SectionTitle(Icons.Outlined.Security, "Phone access")
-          AccessRow(access.postNotifications, "Show assistant notifications and calls") {
-            if (Build.VERSION.SDK_INT >= 33 && !ctx.has(android.Manifest.permission.POST_NOTIFICATIONS)) runtimeLauncher.launch(Capabilities.POST_NOTIFICATIONS.toTypedArray())
-            else ctx.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-          }
-          if (Build.VERSION.SDK_INT >= 34) AccessRow(access.fullScreen, "Full-screen incoming assistant calls") { open(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true) }
-          AccessRow(access.dnd, "Alarms ring through Do Not Disturb") { open(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) }
-          AccessRow(access.location, "Location") { runtimeLauncher.launch(Capabilities.LOCATION.toTypedArray()) }
-          if (access.location && Capabilities.BACKGROUND_LOCATION.isNotEmpty())
-            AccessRow(access.backgroundLocation, "Location while the app is closed (Allow all the time)") { runtimeLauncher.launch(Capabilities.BACKGROUND_LOCATION.toTypedArray()) }
-          AccessRow(access.sms, "Read and send SMS") { runtimeLauncher.launch(Capabilities.SMS.toTypedArray()) }
-          AccessRow(access.contacts, "Contacts") { runtimeLauncher.launch(Capabilities.CONTACTS.toTypedArray()) }
-          if (deniedOnce && !(access.sms && access.contacts && access.location)) {
-            Text("If Android refuses or a switch is greyed out, open App info, tap ⋮ > Allow restricted settings, then try again. Sideloaded apps need this for SMS and notification access.",
-              style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedButton(onClick = { open(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, withPackage = true) }) { Text("Open App info") }
-          }
-        }
-      }
+      HealthConnectCard()
+      NotificationAccessCard()
+      PhoneAccessCard()
 
       Text("Only method names and times are shown here. Health values, notifications, messages, contacts and locations are never logged or stored by the app.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -411,14 +314,10 @@ private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long,
   }
 }
 
-@Composable private fun SectionTitle(icon: ImageVector, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
+@Composable fun SectionTitle(icon: ImageVector, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
   Icon(icon, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); Text(text, style = MaterialTheme.typography.titleMedium)
 }
-@Composable private fun AccessRow(granted: Boolean, text: String, onGrant: () -> Unit) = Row(verticalAlignment = Alignment.CenterVertically) {
-  Box(Modifier.weight(1f)) { CheckRow(granted, text) }
-  if (!granted) TextButton(onClick = onGrant) { Text("Allow") }
-}
-@Composable private fun CheckRow(ok: Boolean, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
+@Composable fun CheckRow(ok: Boolean, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
   Icon(if (ok) Icons.Filled.CheckCircle else Icons.Filled.Warning, null, tint = if (ok) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
   Spacer(Modifier.width(8.dp)); Text(text, style = MaterialTheme.typography.bodyMedium)
 }
@@ -427,15 +326,6 @@ private fun ago(t: Long): String {
   val s = (System.currentTimeMillis() - t) / 1000
   return when { s < 60 -> "just now"; s < 3600 -> "${s / 60} min ago"; s < 86400 -> "${s / 3600} h ago"; else -> DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t)) }
 }
-private suspend fun readHc(ctx: Context): HcInfo {
-  val sdk = HealthConnectClient.getSdkStatus(ctx)
-  if (sdk != HealthConnectClient.SDK_AVAILABLE) return HcInfo(sdk, 0, HealthHandler.READ_PERMS.size, false, false)
-  val c = HealthConnectClient.getOrCreate(ctx)
-  val g = c.permissionController.getGrantedPermissions()
-  val bg = HealthHandler.backgroundAvailable(c)
-  return HcInfo(sdk, HealthHandler.READ_PERMS.count { it in g }, HealthHandler.READ_PERMS.size, bg, HealthHandler.BACKGROUND_PERM in g)
-}
-
 private object MaskTransformation : VisualTransformation {
   override fun filter(text: AnnotatedString): TransformedText {
     val n = text.length
