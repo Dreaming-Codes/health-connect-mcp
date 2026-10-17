@@ -123,6 +123,28 @@ Other error codes: `notifications_permission_missing`, `channel_blocked`, `locat
 `get_phone_status` (MCP) returns `{mode:"push"|"none", push_registered, push_registered_at, last_push:{latency_ms,at},
 last_seen, device}` plus `phone` (the phone's own answer, which takes one push round trip) when registered.
 
+## Enrollment and multi-device
+Design and tradeoffs: `docs/enrollment.md`.
+
+| endpoint | auth | body | answer |
+|---|---|---|---|
+| `POST /enroll` | none (new owner), owner MCP token (link), or none + `pairing_code` (link) | `{name, pairing_code?}` | `{device_id, device_token, owner_id, linked}` |
+| `POST /phone/connector-code` | device token | `{}` | `{code, expires_at, claim_url}` |
+| `POST /phone/pairing-code` | device token | `{}` | `{code, expires_at}` |
+| `POST /phone/name` | device token | `{name}` | `{ok}` |
+| `POST /claim` or `GET /claim?code=` | none | `{code}` | `{name, mcp_url, transport, headers:{Authorization}}` |
+
+- Tokens are `hcd_<device_id>_<secret>` (device) and `hco_<owner_id>_<secret>` (connector). Only SHA-256 hashes of
+  the secret are stored, in the device's `PhoneHub` and the owner's `OwnerHub`.
+- Codes are 8 Crockford base32 characters shown as `XXXX-XXXX`, single use, valid for 10 minutes. Input is
+  case-insensitive and `O`/`I`/`L` read as `0`/`1`.
+- `/enroll` allows 10 requests per client IP per hour, and `/claim` allows 20.
+- A connector token only reaches its owner's devices, and a device token only works on `/phone/*`.
+- Legacy: the `MCP_TOKEN` secret is the connector of owner `0000000000000000`, and `DEVICE_TOKEN_HASH` is its device
+  `phone` (the original Durable Object). Both keep working unchanged and can link new devices.
+- MCP: `list_devices`, and an optional `device` (id or name) on every phone tool. Without `device`, the most recently
+  seen device answers.
+
 ## Secrets (Worker)
 `MCP_TOKEN`, `DEVICE_TOKEN_HASH`, `FCM_SERVICE_ACCOUNT` (Firebase service-account JSON; RS256 JWT is signed with WebCrypto
 and the OAuth token is cached in DO storage). Diagnostic: `GET /admin/fcm-selftest?token=<fcm token>` with the MCP token.

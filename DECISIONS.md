@@ -1,0 +1,27 @@
+# Decisions
+
+Forks decided without waiting for review, each with its reason. Change any of them and the code follows.
+
+## Phone tools (PR #2)
+- **The location spec was designed here** (no spec was given). `get_location {max_age_s, timeout_s}` returns a cached fix if it is fresh enough, otherwise a current one. When woken by push, it needs "Allow all the time" location.
+- **Alarm instead of play_sound and stop_sound.** It is folded into `send_notification(alarm)`, per Lorenzo. Since targetSdk 35 an app cannot change global DND, so alarms use a `setBypassDnd` channel when DND access is granted.
+- **Alarm volume 0 is reported, not changed.** A warning is returned and the volume is never raised. That would be device control, which is out of scope.
+- **`start_call` waits in the Worker** for the call outcome (up to `ring_seconds + 5` s). The phone answers right away and posts answered or declined as an event.
+- **Notification dismiss reports `removed: false`** when Android has not confirmed removal within the wait window. It does not fail.
+- **Every reply input is filled with the same `replyText`.** No `reply_key` is exposed.
+
+## Deploy and test
+- **Production Worker deployed from `notifications`** (2026-10-17 01:52 PDT). Rollback version: `c17bf7ea-d20b-4608-b3ef-0f747aa6cf69`.
+- **The emulator uses a separate Worker** (`health-connect-mcp-e2e`) with its own tokens. Registering the emulator against production would replace the real phone's FCM registration.
+- **Enrollment is not deployed to production.** It adds Durable Object classes (migration v2), and Cloudflare cannot roll a Worker back past a migration. It is live on the e2e Worker only, until Lorenzo OKs it.
+- **No KVM on the box.** The API 35 emulator was too slow under software emulation (system_server ANRs), so the live run uses a lighter API 33 Google APIs image.
+
+## Enrollment (PR #3)
+- **Self-routing tokens with per-owner and per-device Durable Objects**, rather than a central registry. See `docs/enrollment.md`.
+- **Anonymous enroll is allowed and rate-limited.** It always creates a new, empty owner, so the user only types the URL.
+- **MCP tokens are minted only by claim.** `/enroll` never returns an MCP token. Each claim creates a new connector token with a label, so no plaintext MCP token is stored anywhere.
+- **Grok Bot handoff is a prefilled share** (`ACTION_SEND text/plain` to `ai.x.grok.bot`). The decompiled app has `/v1/plugin/add?id=<marketplace plugin id>`, `/v1/dictate?id=<agent>`, `/v1/open` and `/v1/agent`. Each takes only a single `id`, and none accepts a URL, a header or text. The manifest has an `ACTION_SEND text/plain` filter on `MainActivity`, handled by `SharedTextIntent` and then `startText`.
+- **The chat sees a single-use claim code, never the token.** `GET /claim?code=` is accepted alongside POST for agents that can only fetch.
+- **Device names live only in `PhoneHub`.** `list_devices` reads each device, so no name is copied into the owner.
+- **The default device is the most recently seen one.** It changes whenever another device answers.
+- **`get_phone_status` adds `name` only for enrolled devices**, so the legacy contract output stays byte-identical.
