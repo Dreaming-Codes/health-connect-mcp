@@ -5,7 +5,7 @@ import type { Env } from "./env";
 import { FcmError, mintAccessToken, sendData, type ServiceAccount } from "./fcm";
 
 const OAUTH_REFRESH_MARGIN_MS = 120_000;
-export const isoOrNull = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
+const isoOrNull = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
 export class PhoneError extends Error {}
 
@@ -24,8 +24,8 @@ export const NotificationEvent = z.object({
   at: z.string().refine((v) => !Number.isNaN(Date.parse(v)), "ISO-8601 time"),
 });
 export type NotificationEvent = z.infer<typeof NotificationEvent>;
-export type StoredEvent = NotificationEvent & { received_at: string };
-export type ResponseFilter = { notification_id?: string; since?: string };
+type StoredEvent = NotificationEvent & { received_at: string };
+type ResponseFilter = { notification_id?: string; since?: string };
 
 const EVENT_PREFIX = "event:";
 const EVENT_TTL_MS = 7 * 24 * 3600_000;
@@ -40,8 +40,8 @@ export function parsePhoneReply(body: Record<string, any>): PhoneReply {
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; sentAt: number };
 type OAuthToken = { token: string; expiresAt: number };
 type DeviceAuth = { token_hash: string; owner_id: string };
-export type DeviceInfo = { app_version?: string; device?: string; mode?: string; ts: number };
-export type PhoneStatus = {
+type DeviceInfo = { app_version?: string; device?: string; mode?: string; ts: number };
+type PhoneStatus = {
   name?: string;
   mode: "push" | "none";
   push_registered: boolean;

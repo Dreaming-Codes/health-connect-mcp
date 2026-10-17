@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const DEFAULT_TZ = "Europe/Amsterdam";
+const DEFAULT_TZ = "Europe/Amsterdam";
 
 const HAS_OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i;
 const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/;
