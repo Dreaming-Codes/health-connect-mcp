@@ -123,13 +123,6 @@ fun BridgeScreen() {
     setupError = msg
     scope.launch { scroll.animateScrollTo(setupY); (if (url.isBlank()) urlFocus else tokenFocus).requestFocus() }
   }
-  fun save(): Boolean {
-    val u = url.trim().trimEnd('/')
-    if (!u.startsWith("https://") && !u.startsWith("http://")) { goToSetup("Worker URL must start with https://"); return false }
-    if (token.isBlank()) { goToSetup("Enter the device token"); return false }
-    Settings.save(ctx, u, token); savedUrl = u; savedToken = token.trim(); setupError = null
-    return true
-  }
   suspend fun registerPush() {
     BridgeState.set { it.copy(registering = true) }
     val err = withContext(Dispatchers.IO) { WorkerApi.register(ctx) }
@@ -139,7 +132,12 @@ fun BridgeScreen() {
   fun connect() {
     val u = url.trim().trimEnd('/')
     if (!u.startsWith("https://") && !u.startsWith("http://")) { goToSetup("Worker URL must start with https://"); return }
-    if (manualToken) { if (save()) scope.launch { registerPush() }; return }
+    if (manualToken) {
+      if (token.isBlank()) { goToSetup("Enter the device token"); return }
+      Settings.save(ctx, u, token); savedUrl = u; savedToken = token.trim(); setupError = null
+      scope.launch { registerPush() }
+      return
+    }
     val n = name.trim().ifBlank { Build.MODEL ?: "Android phone" }
     if (linkMode && pairing.isBlank()) { setupError = "Enter the pairing code shown on your other phone"; return }
     busy = true
@@ -160,7 +158,7 @@ fun BridgeScreen() {
       busy = false
       result.onSuccess { c ->
         issued = kind to c
-        if (kind == CodeKind.Connector && !GrokBotHandoff.share(ctx, GrokBotHandoff.message(c, savedName.ifBlank { name })))
+        if (kind == CodeKind.Connector && !GrokBot.share(ctx, GrokBot.connectorMessage(c, savedName.ifBlank { name })))
           snackbar.showSnackbar("Grok Bot is not installed; copy the message instead")
       }.onFailure { snackbar.showSnackbar("Failed: ${it.message}") }
     }
@@ -180,27 +178,7 @@ fun BridgeScreen() {
     BridgeState.set { it.copy(pushRegisteredAt = null, pushError = null) }
   }
 
-  issued?.let { (kind, c) ->
-    AlertDialog(
-      onDismissRequest = { issued = null },
-      confirmButton = { TextButton(onClick = { issued = null }) { Text("Done") } },
-      dismissButton = {
-        TextButton(onClick = {
-          val text = if (kind == CodeKind.Connector) GrokBotHandoff.message(c, savedName.ifBlank { name }) else c.code
-          (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("code", text))
-        }) { Text(if (kind == CodeKind.Connector) "Copy message" else "Copy") }
-      },
-      title = { Text(if (kind == CodeKind.Pairing) "Pair another phone" else "Grok Bot claim code") },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-          Text(c.code, style = MaterialTheme.typography.displaySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
-          Text(if (kind == CodeKind.Pairing) "On the other phone, enter the same Worker URL, tap Link to an existing connector and type this code. It works once and expires in 10 minutes."
-            else "Grok Bot exchanges this code once for the connector address and key. It expires in 10 minutes. The key itself never appears in the chat.",
-            style = MaterialTheme.typography.bodyMedium)
-        }
-      },
-    )
-  }
+  issued?.let { (kind, c) -> CodeDialog(kind, c, savedName.ifBlank { name }) { issued = null } }
 
   Scaffold(
     topBar = { LargeTopAppBar(title = { Text("Android Connect") }) },
@@ -280,6 +258,30 @@ fun BridgeScreen() {
       Spacer(Modifier.height(8.dp))
     }
   }
+}
+
+@Composable
+private fun CodeDialog(kind: CodeKind, c: IssuedCode, deviceName: String, onDismiss: () -> Unit) {
+  val ctx = LocalContext.current
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    dismissButton = {
+      TextButton(onClick = {
+        val text = if (kind == CodeKind.Connector) GrokBot.connectorMessage(c, deviceName) else c.code
+        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("code", text))
+      }) { Text(if (kind == CodeKind.Connector) "Copy message" else "Copy") }
+    },
+    title = { Text(if (kind == CodeKind.Pairing) "Pair another phone" else "Grok Bot claim code") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(c.code, style = MaterialTheme.typography.displaySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+        Text(if (kind == CodeKind.Pairing) "On the other phone, enter the same Worker URL, tap Link to an existing connector and type this code. It works once and expires in 10 minutes."
+          else "Grok Bot exchanges this code once for the connector address and key. It expires in 10 minutes. The key itself never appears in the chat.",
+          style = MaterialTheme.typography.bodyMedium)
+      }
+    },
+  )
 }
 
 private fun Modifier.onPlacedY(f: (Int) -> Unit) = this.onGloballyPositioned { c -> f(c.positionInParent().y.toInt()) }

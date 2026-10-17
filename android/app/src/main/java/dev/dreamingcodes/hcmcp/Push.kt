@@ -58,24 +58,21 @@ object WorkerApi {
     http.newCall(req).execute().use { return it.code to (it.body?.string() ?: "") }
   }
 
-  private fun errorOf(code: Int, body: String) = runCatching { JSONObject(body).getString("error") }.getOrNull() ?: "HTTP $code"
+  private fun Pair<Int, String>.okJson(): JSONObject {
+    val (code, text) = this
+    if (code != 200) throw IllegalStateException(runCatching { JSONObject(text).getString("error") }.getOrNull() ?: "HTTP $code")
+    return JSONObject(text)
+  }
 
   fun enroll(url: String, name: String, pairingCode: String?): Enrollment {
     val body = JSONObject().put("name", name).apply { pairingCode?.let { put("pairing_code", it) } }
-    val (code, text) = send(url, "/enroll", body, null)
-    if (code != 200) throw IllegalStateException(errorOf(code, text))
-    return Enrollment.parse(JSONObject(text))
+    return Enrollment.parse(send(url, "/enroll", body, null).okJson())
   }
 
-  fun code(ctx: Context, kind: CodeKind): IssuedCode {
-    val (code, text) = post(ctx, kind.path, JSONObject())
-    if (code != 200) throw IllegalStateException(errorOf(code, text))
-    return IssuedCode.parse(JSONObject(text))
-  }
+  fun code(ctx: Context, kind: CodeKind) = IssuedCode.parse(post(ctx, kind.path, JSONObject()).okJson())
 
   fun rename(ctx: Context, name: String) {
-    val (code, text) = post(ctx, "/phone/name", JSONObject().put("name", name))
-    if (code != 200) throw IllegalStateException(errorOf(code, text))
+    post(ctx, "/phone/name", JSONObject().put("name", name)).okJson()
   }
 
   @WorkerThread
