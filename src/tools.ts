@@ -18,6 +18,7 @@ type Args<S extends z.ZodRawShape> = ShapeOutput<S>;
 const smsText = z.string().min(1).max(5000).describe("Message text; long text is sent as a multipart SMS");
 const SMS_ONLY = "Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.";
 const notificationKey = z.string().min(1).describe("Notification key from list_notifications");
+const notificationTag = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
 
 const text = (o: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }] });
 const failure = (e: unknown) => ({ isError: true, content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }] });
@@ -55,7 +56,13 @@ export function buildServer(hub: Hub): McpServer {
     limit: z.number().int().min(1).max(200).default(50),
     timezone: range.timezone,
   }, (args) => inZone(args, "since"));
-  phone("dismiss_notification", "Dismiss one notification, as if the user swiped it away. Ongoing or non-clearable notifications are refused.", { key: notificationKey });
+  phone("dismiss_notification", "Dismiss one notification. Pass key for any notification from list_notifications, as if the user swiped it away; ongoing or non-clearable ones are refused. Pass notification_id for one sent with send_notification, which also stops its alarm and needs no notification access.", {
+    key: notificationKey.optional(),
+    notification_id: notificationTag.optional().describe("The notification_id returned by send_notification"),
+  }, (args) => {
+    if ((args.key === undefined) === (args.notification_id === undefined)) throw new Error("pass exactly one of key or notification_id");
+    return args;
+  });
   phone("perform_notification_action", "Tap a notification's action button by index, or its body with action \"content\". Reply actions need replyText, which is sent as the typed reply.", {
     key: notificationKey,
     action: z.union([z.number().int().min(0), z.literal("content")]).describe("Action index from list_notifications, or \"content\" to tap the notification itself"),
@@ -64,7 +71,7 @@ export function buildServer(hub: Hub): McpServer {
     if (args.action === "content" && args.replyText !== undefined) throw new Error("replyText only applies to a reply action index");
     return args;
   });
-  phone("send_notification", "Show a notification on the phone from the assistant, optionally with buttons and reply fields. Taps and replies are collected by get_notification_responses. Reusing a tag replaces that notification. With alarm, it rings as an alarm (audible in silent and vibrate mode, and through Do Not Disturb when alarms are allowed or the app has Do Not Disturb access) until dismiss_notification or the user dismisses it.", {
+  phone("send_notification", "Show a notification on the phone from the assistant, optionally with buttons and reply fields. Taps and replies are collected by get_notification_responses. Reusing a tag replaces that notification. With alarm, it rings as an alarm (audible in silent and vibrate mode, and through Do Not Disturb when alarms are allowed or the app has Do Not Disturb access) until dismiss_notification with its notification_id, or the user, dismisses it.", {
     title: z.string().min(1).max(200),
     text: z.string().max(2000).optional(),
     channel: z.string().min(1).max(40).default("Assistant").describe("Channel name shown in Android settings. Android fixes a channel's sound and importance when it is first created, so each importance/silent combination gets its own channel"),
@@ -73,7 +80,7 @@ export function buildServer(hub: Hub): McpServer {
     alarm: z.boolean().default(false).describe("Ring with the default alarm sound on the alarm stream, like a find-my-phone ring. Overrides channel, importance and silent"),
     insistent: z.boolean().default(true).describe("With alarm, loop the sound until the notification is dismissed"),
     vibrate: z.boolean().default(true).describe("With alarm, vibrate as well"),
-    tag: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/).optional().describe("Stable id; sending again with the same tag replaces the notification"),
+    tag: notificationTag.optional().describe("Stable id, returned as notification_id; sending again with the same tag replaces the notification"),
     actions: z.array(z.object({
       id: z.string().regex(/^[a-z0-9_-]{1,32}$/).refine((v) => v !== "content", "content is reserved for taps on the notification body"),
       label: z.string().min(1).max(40),

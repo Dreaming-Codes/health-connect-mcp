@@ -19,7 +19,8 @@ function answer(method, params) {
   switch (method) {
     case "get_phone_status": return { result: { app_version: "0.4.0", device: params.__phone ?? "Sim Phone", android_sdk: 37 } };
     case "list_notifications": return { result: { timezone: params.timezone, total_active: 1, count: 1, notifications: [{ key: "0|com.sim|1|null|1", package: "com.sim", actions: [{ index: 0, title: "Reply", reply: true }] }] } };
-    case "dismiss_notification": return params.key === "missing" ? { error: { code: "not_found", message: "no active notification with that key" } } : { result: { key: params.key, removed: true } };
+    case "dismiss_notification": if (params.notification_id) return { result: { notification_id: params.notification_id, removed: true } };
+      return params.key === "missing" ? { error: { code: "not_found", message: "no active notification with that key" } } : { result: { key: params.key, removed: true } };
     case "perform_notification_action": return { result: { key: params.key, sent: true, opens_activity: false } };
     case "send_notification": return { result: { notification_id: params.tag ?? "nsim0001", channel_id: params.alarm ? "bot_alarm" : "bot_assistant_default" } };
     case "start_call": return { result: { call_id: params.call_id, ringing: true, full_screen: true } };
@@ -76,6 +77,12 @@ try {
 
   r = await call("dismiss_notification", { key: "missing" });
   check(r.error && r.text.includes("not_found"), "dismiss_notification surfaces not_found");
+  r = await call("dismiss_notification", { notification_id: "poll1" });
+  check(!r.error && r.json.removed && last().params.notification_id === "poll1" && !("key" in last().params), "dismiss_notification by notification_id");
+  r = await call("dismiss_notification", { key: "k", notification_id: "poll1" });
+  check(r.error && r.text.includes("exactly one"), "dismiss_notification refuses key and notification_id together");
+  r = await call("dismiss_notification", {});
+  check(r.error && r.text.includes("exactly one"), "dismiss_notification needs key or notification_id");
 
   r = await call("perform_notification_action", { key: "k", action: 0, replyText: "on my way" });
   check(!r.error && r.json.sent && last().params.replyText === "on my way" && last().params.action === 0, "perform_notification_action forwards reply");

@@ -32,7 +32,7 @@ const r = { start: "2026-10-10", end: "2026-10-13" };
 const branchCases = [
   ["list_notifications", {}], ["list_notifications", { package: "com.whatsapp", since: "2026-10-13T08:00", limit: 5 }],
   ["list_notifications", { since: "yesterday" }], ["list_notifications", { limit: 0 }], ["list_notifications", { timezone: "Mars/Base" }],
-  ["dismiss_notification", { key: "0|com.example|1|null|10001" }], ["dismiss_notification", {}], ["dismiss_notification", { key: "" }],
+  ["dismiss_notification", { key: "0|com.example|1|null|10001" }], ["dismiss_notification", {}], ["dismiss_notification", { key: "" }], ["dismiss_notification", { notification_id: "poll1" }], ["dismiss_notification", { key: "k", notification_id: "poll1" }],
   ["perform_notification_action", { key: "k", action: 0, replyText: "on my way" }], ["perform_notification_action", { key: "k", action: "content" }],
   ["perform_notification_action", { key: "k", action: -1 }], ["perform_notification_action", { key: "k", action: "open" }],
   ["perform_notification_action", { key: "k", action: "content", replyText: "x" }], ["perform_notification_action", { key: "k", action: 0, replyText: "" }],

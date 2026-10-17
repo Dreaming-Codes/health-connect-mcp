@@ -6,11 +6,12 @@ This file is generated from the live tool list. To regenerate it, run `npm run d
 
 ## `dismiss_notification`
 
-Dismiss one notification, as if the user swiped it away. Ongoing or non-clearable notifications are refused.
+Dismiss one notification. Pass key for any notification from list_notifications, as if the user swiped it away; ongoing or non-clearable ones are refused. Pass notification_id for one sent with send_notification, which also stops its alarm and needs no notification access.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `key` | string | yes |  | Notification key from list_notifications |
+| `key` | string | no |  | Notification key from list_notifications |
+| `notification_id` | string | no |  | The notification_id returned by send_notification |
 
 ## `get_exercise_sessions`
 
@@ -185,7 +186,7 @@ Send an SMS from the phone's default SIM and report whether it was sent and deli
 
 ## `send_notification`
 
-Show a notification on the phone from the assistant, optionally with buttons and reply fields. Taps and replies are collected by get_notification_responses. Reusing a tag replaces that notification. With alarm, it rings as an alarm (audible in silent and vibrate mode, and through Do Not Disturb when alarms are allowed or the app has Do Not Disturb access) until dismiss_notification or the user dismisses it.
+Show a notification on the phone from the assistant, optionally with buttons and reply fields. Taps and replies are collected by get_notification_responses. Reusing a tag replaces that notification. With alarm, it rings as an alarm (audible in silent and vibrate mode, and through Do Not Disturb when alarms are allowed or the app has Do Not Disturb access) until dismiss_notification with its notification_id, or the user, dismisses it.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -197,7 +198,7 @@ Show a notification on the phone from the assistant, optionally with buttons and
 | `alarm` | boolean | no | `false` | Ring with the default alarm sound on the alarm stream, like a find-my-phone ring. Overrides channel, importance and silent |
 | `insistent` | boolean | no | `true` | With alarm, loop the sound until the notification is dismissed |
 | `vibrate` | boolean | no | `true` | With alarm, vibrate as well |
-| `tag` | string | no |  | Stable id; sending again with the same tag replaces the notification |
+| `tag` | string | no |  | Stable id, returned as notification_id; sending again with the same tag replaces the notification |
 | `actions` | array of objects | no | `[]` |  |
 | `actions[].id` | string | yes |  |  |
 | `actions[].label` | string, ≤ 40 chars | yes |  |  |

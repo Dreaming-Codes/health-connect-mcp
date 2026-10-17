@@ -40,7 +40,7 @@ Health Connect's `READ_HEALTH_DATA_IN_BACKGROUND` where the feature exists.
 | `read_records` | `recordType` (Steps, HeartRate, RestingHeartRate, SleepSession, ExerciseSession, Distance, ActiveCaloriesBurned, TotalCaloriesBurned, Weight, Nutrition, Hydration), `limit` ≤1000 | `{recordType, count, records:[{source, time\|start,end, …type fields}]}` |
 | `get_phone_status` | – | `{app_version, device, android_sdk, battery, notification_access, notification_listener_connected, health_connect, granted[], missing[]}` |
 | `list_notifications` | `package`, `since` (offset ISO), `limit` 1–200 (default 50), `timezone`; no `start`/`end` | `{timezone, total_active, count, notifications:[…]}`, newest first |
-| `dismiss_notification` | `key` | `{key, removed}` |
+| `dismiss_notification` | `key`, or `notification_id` from `send_notification` (0.7.0) | `{key, removed}` or `{notification_id, removed}` |
 | `perform_notification_action` | `key`, `action` (index ≥ 0 or `"content"`), `replyText` | `{key, sent, opens_activity}` |
 | `send_notification` | `title`, `text`, `channel`, `importance` (min/low/default/high), `silent`, `alarm`, `insistent`, `vibrate`, `tag`, `actions[{id,label,reply?{placeholder}}]` ≤3 | `{notification_id, channel_id}`; alarms add `{alarm_volume, alarm_volume_max, bypass_dnd, dnd_filter, warning?}` |
 | `start_call` | `call_id`, `agent_id`, `caller_name`, `reason` ≤140, `ring_seconds` 5–60 | `{call_id, ringing, full_screen, grok_bot_installed}` |
