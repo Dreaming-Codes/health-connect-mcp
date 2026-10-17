@@ -81,6 +81,12 @@ fun AppTheme(content: @Composable () -> Unit) {
   MaterialTheme(colorScheme = scheme, content = content)
 }
 
+private data class Access(val postNotifications: Boolean = false, val dnd: Boolean = false, val fullScreen: Boolean = false,
+  val location: Boolean = false, val backgroundLocation: Boolean = false, val sms: Boolean = false, val contacts: Boolean = false)
+
+private fun readAccess(ctx: Context) = Access(Capabilities.canPostNotifications(ctx), Capabilities.dndAccess(ctx), Calls.canFullScreen(ctx),
+  Capabilities.location(ctx), Capabilities.backgroundLocation(ctx), Capabilities.SMS.all { ctx.has(it) }, Capabilities.CONTACTS.all { ctx.has(it) })
+
 private data class HcInfo(val sdk: Int, val granted: Int, val total: Int, val backgroundAvailable: Boolean, val backgroundGranted: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -103,11 +109,17 @@ fun BridgeScreen() {
   val urlFocus = remember { FocusRequester() }
   val tokenFocus = remember { FocusRequester() }
   var hc by remember { mutableStateOf<HcInfo?>(null) }
+  var notificationAccess by remember { mutableStateOf(false) }
+  var access by remember { mutableStateOf(Access()) }
+  var deniedOnce by rememberSaveable { mutableStateOf(false) }
+  val listenerConnected by NotificationIndex.listener.collectAsState()
   var lastReq by remember { mutableStateOf<Pair<Long, String>?>(null) }
   var tick by remember { mutableIntStateOf(0) }
 
   suspend fun refresh() {
     hc = withContext(Dispatchers.IO) { readHc(ctx) }
+    notificationAccess = NotificationIndex.accessGranted(ctx)
+    access = readAccess(ctx)
     lastReq = withContext(Dispatchers.IO) { Settings.lastRequest(ctx) }
   }
   LaunchedEffect(Unit) {
@@ -129,6 +141,15 @@ fun BridgeScreen() {
   LaunchedEffect(status.lastRequestAt) { status.lastRequestAt?.let { lastReq = it to (status.lastRequestMethod ?: "") } }
 
   val permLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { scope.launch { refresh() } }
+  val runtimeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+    if (res.values.any { !it }) deniedOnce = true
+    scope.launch { refresh() }
+  }
+  fun open(action: String, withPackage: Boolean = false) {
+    val i = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (withPackage) i.data = Uri.parse("package:${ctx.packageName}")
+    runCatching { ctx.startActivity(i) }
+  }
 
   val configured = savedUrl.isNotBlank() && savedToken.isNotBlank()
   val dirty = url.trim().trimEnd('/') != savedUrl || token.trim() != savedToken
@@ -235,7 +256,42 @@ fun BridgeScreen() {
         }
       }
 
-      Text("Only method names and times are shown here. Health values are never logged or stored by the bridge.",
+      ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          SectionTitle(Icons.Outlined.Notifications, "Notifications")
+          CheckRow(notificationAccess, if (notificationAccess) "Notification access granted" else "Notification access not granted")
+          if (notificationAccess) CheckRow(listenerConnected != null, if (listenerConnected != null) "Listener connected" else "Listener not connected yet")
+          val openSettings = { ctx.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+          if (notificationAccess) TextButton(onClick = openSettings) { Text("Review notification access") }
+          else Button(onClick = openSettings, modifier = Modifier.fillMaxWidth()) { Text("Grant notification access") }
+          Text("Lets your assistant read, dismiss and act on notifications, including replies.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+      }
+
+      ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          SectionTitle(Icons.Outlined.Security, "Phone access")
+          AccessRow(access.postNotifications, "Show assistant notifications and calls") {
+            if (Build.VERSION.SDK_INT >= 33 && !ctx.has(android.Manifest.permission.POST_NOTIFICATIONS)) runtimeLauncher.launch(Capabilities.POST_NOTIFICATIONS.toTypedArray())
+            else ctx.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+          }
+          if (Build.VERSION.SDK_INT >= 34) AccessRow(access.fullScreen, "Full-screen incoming assistant calls") { open(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true) }
+          AccessRow(access.dnd, "Alarms ring through Do Not Disturb") { open(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) }
+          AccessRow(access.location, "Location") { runtimeLauncher.launch(Capabilities.LOCATION.toTypedArray()) }
+          if (access.location && Capabilities.BACKGROUND_LOCATION.isNotEmpty())
+            AccessRow(access.backgroundLocation, "Location while the app is closed (Allow all the time)") { runtimeLauncher.launch(Capabilities.BACKGROUND_LOCATION.toTypedArray()) }
+          AccessRow(access.sms, "Read and send SMS") { runtimeLauncher.launch(Capabilities.SMS.toTypedArray()) }
+          AccessRow(access.contacts, "Contacts") { runtimeLauncher.launch(Capabilities.CONTACTS.toTypedArray()) }
+          if (deniedOnce && !(access.sms && access.contacts && access.location)) {
+            Text("If Android refuses or a switch is greyed out, open App info, tap ⋮ > Allow restricted settings, then try again. Sideloaded apps need this for SMS and notification access.",
+              style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = { open(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, withPackage = true) }) { Text("Open App info") }
+          }
+        }
+      }
+
+      Text("Only method names and times are shown here. Health values, notifications, messages, contacts and locations are never logged or stored by the bridge.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Spacer(Modifier.height(8.dp))
@@ -277,6 +333,10 @@ private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long,
 
 @Composable private fun SectionTitle(icon: ImageVector, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
   Icon(icon, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); Text(text, style = MaterialTheme.typography.titleMedium)
+}
+@Composable private fun AccessRow(granted: Boolean, text: String, onGrant: () -> Unit) = Row(verticalAlignment = Alignment.CenterVertically) {
+  Box(Modifier.weight(1f)) { CheckRow(granted, text) }
+  if (!granted) TextButton(onClick = onGrant) { Text("Allow") }
 }
 @Composable private fun CheckRow(ok: Boolean, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
   Icon(if (ok) Icons.Filled.CheckCircle else Icons.Filled.Warning, null, tint = if (ok) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))

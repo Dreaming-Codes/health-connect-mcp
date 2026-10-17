@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
-  <!-- Data-only pushes never show notifications; drop the permission Firebase merges in. -->
-  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" tools:node="remove"/>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+  <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY"/>
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+  <uses-permission android:name="android.permission.READ_SMS"/>
+  <uses-permission android:name="android.permission.SEND_SMS"/>
+  <uses-permission android:name="android.permission.READ_CONTACTS"/>
+  <uses-feature android:name="android.hardware.telephony" android:required="false"/>
+  <uses-feature android:name="android.hardware.location" android:required="false"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.health.READ_STEPS"/>
@@ -16,7 +25,11 @@
   <uses-permission android:name="android.permission.health.READ_NUTRITION"/>
   <uses-permission android:name="android.permission.health.READ_HYDRATION"/>
   <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"/>
-  <queries><package android:name="com.google.android.apps.healthdata"/></queries>
+  <queries>
+    <package android:name="com.google.android.apps.healthdata"/>
+    <package android:name="ai.x.grok.bot"/>
+    <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent>
+  </queries>
   <application android:label="HC Bridge" android:icon="@android:drawable/ic_menu_compass" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
     <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
@@ -28,5 +41,13 @@
     <service android:name=".PushService" android:exported="false">
       <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
     </service>
+    <service android:name=".NotificationListener" android:exported="false" android:label="HC Bridge" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter><action android:name="android.service.notification.NotificationListenerService"/></intent-filter>
+    </service>
+    <receiver android:name=".BotEventReceiver" android:exported="false"/>
+    <receiver android:name=".CallDeclineReceiver" android:exported="false"/>
+    <activity android:name=".IncomingCallActivity" android:exported="false" android:showWhenLocked="true" android:turnScreenOn="true"
+      android:excludeFromRecents="true" android:launchMode="singleTask" android:taskAffinity="dev.dreamingcodes.hcmcp.call"
+      android:theme="@android:style/Theme.Material.NoActionBar"/>
   </application>
 </manifest>

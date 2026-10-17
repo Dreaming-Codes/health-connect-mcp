@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "HCBridge"
 
+class PhoneFailure(val code: String, message: String) : Exception(message)
+
 object WorkerApi {
   private val http = OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).writeTimeout(8, TimeUnit.SECONDS).build()
   private val JSON = "application/json".toMediaType()
@@ -46,6 +48,11 @@ object WorkerApi {
   }
 }
 
+suspend fun dispatch(ctx: Context, method: String, params: JSONObject): Any {
+  val groups = listOf(NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), LocationHandler(ctx), MessagesHandler(ctx), ContactsHandler(ctx))
+  return groups.firstOrNull { method in it.methods }?.handle(method, params) ?: HealthHandler(ctx).handle(method, params)
+}
+
 class PushService : FirebaseMessagingService() {
   override fun onNewToken(token: String) {
     if (Settings.isConfigured(this)) WorkerApi.register(this, token)
@@ -59,9 +66,9 @@ class PushService : FirebaseMessagingService() {
     // High-priority messages get about 20 s of execution; leave headroom to post the reply.
     runBlocking {
       try {
-        withTimeout(15_000) { reply.put("result", HealthHandler(this@PushService).handle(method, JSONObject(d["params"] ?: "{}"))) }
+        withTimeout(15_000) { reply.put("result", dispatch(this@PushService, method, JSONObject(d["params"] ?: "{}"))) }
       } catch (e: Throwable) {
-        val code = when (e) { is SecurityException -> "permission_denied"; is BadParams -> "bad_params"; is NoSuchMethodException -> "unknown_method"
+        val code = when (e) { is PhoneFailure -> e.code; is SecurityException -> "permission_denied"; is BadParams -> "bad_params"; is NoSuchMethodException -> "unknown_method"
           is kotlinx.coroutines.TimeoutCancellationException -> "timeout"; else -> "internal" }
         reply.put("error", JSONObject().put("code", code).put("message", e.message ?: e.javaClass.simpleName))
       }
@@ -74,4 +81,5 @@ class PushService : FirebaseMessagingService() {
     Settings.setLastRequest(this, now, method)
     BridgeState.set { it.copy(lastRequestAt = now, lastRequestMethod = method) }
   }
+
 }
