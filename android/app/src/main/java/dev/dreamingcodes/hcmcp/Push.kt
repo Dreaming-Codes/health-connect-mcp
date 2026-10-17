@@ -20,17 +20,15 @@ import java.util.concurrent.TimeUnit
 
 const val TAG = "AndroidConnect"
 
-data class Enrollment(val deviceId: String, val deviceToken: String, val linked: Boolean) {
+data class Enrollment(val deviceId: String, val deviceToken: String) {
   companion object {
-    fun parse(o: JSONObject) = Enrollment(o.getString("device_id"), o.getString("device_token"), o.optBoolean("linked"))
+    fun parse(o: JSONObject) = Enrollment(o.getString("device_id"), o.getString("device_token"))
   }
 }
 
-enum class CodeKind(val path: String) { Connector("/phone/connector-code"), Pairing("/phone/pairing-code") }
-
-data class IssuedCode(val code: String, val expiresAt: String, val claimUrl: String?) {
+data class IssuedCode(val code: String, val claimUrl: String) {
   companion object {
-    fun parse(o: JSONObject) = IssuedCode(o.getString("code"), o.getString("expires_at"), o.optString("claim_url").ifBlank { null })
+    fun parse(o: JSONObject) = IssuedCode(o.getString("code"), o.getString("claim_url"))
   }
 }
 
@@ -64,12 +62,9 @@ object WorkerApi {
     return JSONObject(text)
   }
 
-  fun enroll(url: String, name: String, pairingCode: String?): Enrollment {
-    val body = JSONObject().put("name", name).apply { pairingCode?.let { put("pairing_code", it) } }
-    return Enrollment.parse(send(url, "/enroll", body, null).okJson())
-  }
+  fun enroll(url: String, name: String) = Enrollment.parse(send(url, "/enroll", JSONObject().put("name", name), null).okJson())
 
-  fun code(ctx: Context, kind: CodeKind) = IssuedCode.parse(post(ctx, kind.path, JSONObject()).okJson())
+  fun connectorCode(ctx: Context) = IssuedCode.parse(post(ctx, "/phone/connector-code", JSONObject()).okJson())
 
   fun rename(ctx: Context, name: String) {
     post(ctx, "/phone/name", JSONObject().put("name", name)).okJson()
