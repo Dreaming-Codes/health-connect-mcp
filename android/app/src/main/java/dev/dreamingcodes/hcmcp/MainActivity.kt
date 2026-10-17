@@ -104,6 +104,14 @@ fun BridgeScreen() {
   var savedUrl by remember { mutableStateOf("") }
   var savedToken by remember { mutableStateOf("") }
   var showToken by rememberSaveable { mutableStateOf(false) }
+  var name by rememberSaveable { mutableStateOf(Build.MODEL ?: "Android phone") }
+  var savedName by remember { mutableStateOf("") }
+  var savedDeviceId by remember { mutableStateOf("") }
+  var pairing by rememberSaveable { mutableStateOf("") }
+  var linkMode by rememberSaveable { mutableStateOf(false) }
+  var manualToken by rememberSaveable { mutableStateOf(false) }
+  var busy by remember { mutableStateOf(false) }
+  var issued by remember { mutableStateOf<Pair<CodeKind, IssuedCode>?>(null) }
   var setupError by remember { mutableStateOf<String?>(null) }
   var setupY by remember { mutableIntStateOf(0) }
   val urlFocus = remember { FocusRequester() }
@@ -125,8 +133,8 @@ fun BridgeScreen() {
   LaunchedEffect(Unit) {
     withContext(Dispatchers.IO) {
       val u = Settings.workerUrl(ctx); val t = Settings.deviceToken(ctx)
-      savedUrl = u; savedToken = t
-      if (!loaded) { url = u.ifBlank { Settings.DEFAULT_URL }; token = t; loaded = true }
+      savedUrl = u; savedToken = t; savedDeviceId = Settings.deviceId(ctx); savedName = Settings.deviceName(ctx)
+      if (!loaded) { url = u.ifBlank { Settings.DEFAULT_URL }; token = t; savedName.takeIf { it.isNotBlank() }?.let { name = it }; loaded = true }
       val pa = Settings.pushRegisteredAt(ctx); val pe = Settings.pushError(ctx)
       BridgeState.set { it.copy(pushRegisteredAt = it.pushRegisteredAt ?: pa, pushError = it.pushError ?: pe) }
     }
@@ -152,7 +160,6 @@ fun BridgeScreen() {
   }
 
   val configured = savedUrl.isNotBlank() && savedToken.isNotBlank()
-  val dirty = url.trim().trimEnd('/') != savedUrl || token.trim() != savedToken
 
   fun goToSetup(msg: String) {
     setupError = msg
@@ -164,6 +171,77 @@ fun BridgeScreen() {
     if (token.isBlank()) { goToSetup("Enter the device token"); return false }
     Settings.save(ctx, u, token); savedUrl = u; savedToken = token.trim(); setupError = null
     return true
+  }
+  suspend fun registerPush() {
+    BridgeState.set { it.copy(registering = true) }
+    val err = withContext(Dispatchers.IO) { WorkerApi.register(ctx) }
+    BridgeState.set { it.copy(registering = false) }
+    snackbar.showSnackbar(err?.let { "Registration failed: $it" } ?: "Connected. Your assistant can now reach this phone.")
+  }
+  fun connect() {
+    val u = url.trim().trimEnd('/')
+    if (!u.startsWith("https://") && !u.startsWith("http://")) { goToSetup("Worker URL must start with https://"); return }
+    if (manualToken) { if (save()) scope.launch { registerPush() }; return }
+    val n = name.trim().ifBlank { Build.MODEL ?: "Android phone" }
+    if (linkMode && pairing.isBlank()) { setupError = "Enter the pairing code shown on your other phone"; return }
+    busy = true
+    scope.launch {
+      val result = withContext(Dispatchers.IO) { runCatching { WorkerApi.enroll(u, n, pairing.takeIf { linkMode }) } }
+      busy = false
+      result.onSuccess { e ->
+        withContext(Dispatchers.IO) { Settings.saveEnrollment(ctx, u, e, n) }
+        savedUrl = u; savedToken = e.deviceToken; savedDeviceId = e.deviceId; savedName = n; setupError = null; pairing = ""
+        registerPush()
+      }.onFailure { setupError = "Could not connect: ${it.message}" }
+    }
+  }
+  fun issue(kind: CodeKind) {
+    busy = true
+    scope.launch {
+      val result = withContext(Dispatchers.IO) { runCatching { WorkerApi.code(ctx, kind) } }
+      busy = false
+      result.onSuccess { c ->
+        issued = kind to c
+        if (kind == CodeKind.Connector && !GrokBotHandoff.share(ctx, GrokBotHandoff.message(c, savedName.ifBlank { name })))
+          snackbar.showSnackbar("Grok Bot is not installed; copy the message instead")
+      }.onFailure { snackbar.showSnackbar("Failed: ${it.message}") }
+    }
+  }
+  fun rename() {
+    val n = name.trim()
+    if (n.isBlank()) return
+    scope.launch {
+      val r = withContext(Dispatchers.IO) { runCatching { WorkerApi.rename(ctx, n); Settings.setDeviceName(ctx, n) } }
+      if (r.isSuccess) savedName = n
+      snackbar.showSnackbar(if (r.isSuccess) "Renamed to $n" else "Rename failed: ${r.exceptionOrNull()?.message}")
+    }
+  }
+  fun disconnect() {
+    Settings.clear(ctx)
+    savedUrl = ""; savedToken = ""; savedDeviceId = ""; savedName = ""; token = ""
+    BridgeState.set { it.copy(pushRegisteredAt = null, pushError = null) }
+  }
+
+  issued?.let { (kind, c) ->
+    AlertDialog(
+      onDismissRequest = { issued = null },
+      confirmButton = { TextButton(onClick = { issued = null }) { Text("Done") } },
+      dismissButton = {
+        TextButton(onClick = {
+          val text = if (kind == CodeKind.Connector) GrokBotHandoff.message(c, savedName.ifBlank { name }) else c.code
+          (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("code", text))
+        }) { Text(if (kind == CodeKind.Connector) "Copy message" else "Copy") }
+      },
+      title = { Text(if (kind == CodeKind.Pairing) "Pair another phone" else "Grok Bot claim code") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Text(c.code, style = MaterialTheme.typography.displaySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+          Text(if (kind == CodeKind.Pairing) "On the other phone, enter the same Worker URL, tap Link to an existing connector and type this code. It works once and expires in 10 minutes."
+            else "Grok Bot exchanges this code once for the connector address and key. It expires in 10 minutes. The key itself never appears in the chat.",
+            style = MaterialTheme.typography.bodyMedium)
+        }
+      },
+    )
   }
 
   Scaffold(
@@ -177,58 +255,60 @@ fun BridgeScreen() {
     ) {
       key(tick) { StatusCard(status, configured, lastReq) }
 
-      Button(
-        onClick = {
-          if (!configured || dirty) { if (!configured && (url.isBlank() || token.isBlank())) { goToSetup("Set up the Worker URL and device token first"); return@Button }; if (!save()) return@Button }
-          BridgeState.set { it.copy(registering = true) }
-          scope.launch {
-            val err = withContext(Dispatchers.IO) { WorkerApi.register(ctx) }
-            BridgeState.set { it.copy(registering = false) }
-            snackbar.showSnackbar(err?.let { "Registration failed: $it" } ?: "Registered. Your assistant can now wake this phone.")
-          }
-        },
-        enabled = !status.registering,
-        modifier = Modifier.fillMaxWidth().height(56.dp),
-      ) {
-        if (status.registering) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.NotificationsActive, null)
-        Spacer(Modifier.width(8.dp))
-        Text(if (status.pushRegisteredAt != null) "Re-register device" else "Register device", style = MaterialTheme.typography.titleMedium)
-      }
-
       ElevatedCard(Modifier.fillMaxWidth().onPlacedY { setupY = it }) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-          SectionTitle(Icons.Outlined.Settings, "Setup")
+          SectionTitle(Icons.Outlined.Settings, if (configured) "Connection" else "Connect")
           if (setupError != null) Text(setupError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-          OutlinedTextField(
-            value = url, onValueChange = { url = it; setupError = null }, label = { Text("Worker URL") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth().focusRequester(urlFocus),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-            isError = setupError != null && url.isBlank(),
-          )
-          OutlinedTextField(
-            value = token, onValueChange = { token = it; setupError = null }, label = { Text("Device token") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth().focusRequester(tokenFocus),
-            visualTransformation = if (showToken) VisualTransformation.None else MaskTransformation,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done, autoCorrectEnabled = false),
-            isError = setupError != null && token.isBlank(),
-            trailingIcon = {
-              IconButton(onClick = { showToken = !showToken }) {
-                Icon(if (showToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (showToken) "Hide token" else "Show token")
+          if (!configured) {
+            OutlinedTextField(
+              value = url, onValueChange = { url = it; setupError = null }, label = { Text("Worker URL") }, singleLine = true,
+              modifier = Modifier.fillMaxWidth().focusRequester(urlFocus),
+              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+            )
+            if (!manualToken) OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Device name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (linkMode && !manualToken) OutlinedTextField(
+              value = pairing, onValueChange = { pairing = it.uppercase(); setupError = null }, label = { Text("Pairing code from your other phone") }, singleLine = true,
+              modifier = Modifier.fillMaxWidth(), textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
+              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
+            )
+            if (manualToken) OutlinedTextField(
+              value = token, onValueChange = { token = it; setupError = null }, label = { Text("Device token") }, singleLine = true,
+              modifier = Modifier.fillMaxWidth().focusRequester(tokenFocus),
+              visualTransformation = if (showToken) VisualTransformation.None else MaskTransformation,
+              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done, autoCorrectEnabled = false),
+              trailingIcon = {
+                IconButton(onClick = { showToken = !showToken }) {
+                  Icon(if (showToken) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (showToken) "Hide token" else "Show token")
+                }
+              },
+              textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
+            )
+            Button(onClick = { connect() }, enabled = !busy && !status.registering, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+              if (busy || status.registering) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Filled.Link, null)
+              Spacer(Modifier.width(8.dp)); Text(if (linkMode && !manualToken) "Link this phone" else "Connect", style = MaterialTheme.typography.titleMedium)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+              if (!manualToken) TextButton(onClick = { linkMode = !linkMode; setupError = null }) { Text(if (linkMode) "Start a new connector" else "Link to an existing connector") }
+              TextButton(onClick = { manualToken = !manualToken; setupError = null }) { Text(if (manualToken) "Enroll instead" else "I have a device token") }
+            }
+          } else {
+            Text(savedUrl, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+            if (savedDeviceId.isNotBlank()) {
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Device name") }, singleLine = true, modifier = Modifier.weight(1f))
+                if (name.trim() != savedName && name.isNotBlank()) TextButton(onClick = { rename() }) { Text("Save") }
               }
-            },
-            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
-          )
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = {
-              val clip = (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip
-              val txt = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(ctx)?.toString()?.trim()
-              if (txt.isNullOrBlank()) scope.launch { snackbar.showSnackbar("Clipboard is empty") } else { token = txt; setupError = null }
-            }) { Icon(Icons.Filled.ContentPaste, null); Spacer(Modifier.width(6.dp)); Text("Paste token") }
-            Spacer(Modifier.weight(1f))
-            Button(onClick = { if (save()) scope.launch { snackbar.showSnackbar("Saved. Tap Register device to apply.") } }, enabled = dirty || !configured) { Text("Save") }
+              Text("Device id $savedDeviceId", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else Text("Connected with a device token (single-phone setup).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { issue(CodeKind.Connector) }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+              Icon(Icons.Filled.AutoAwesome, null); Spacer(Modifier.width(8.dp)); Text("Register with Grok Bot", style = MaterialTheme.typography.titleMedium)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              OutlinedButton(onClick = { issue(CodeKind.Pairing) }, enabled = !busy) { Text("Pair another phone") }
+              OutlinedButton(onClick = { scope.launch { registerPush() } }, enabled = !status.registering) { Text("Re-register") }
+              TextButton(onClick = { disconnect() }) { Text("Disconnect") }
+            }
           }
-          Text(if (configured && !dirty) "Saved, stored encrypted on this device." else "Not saved yet.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
       }
 
@@ -317,10 +397,10 @@ private fun StatusCard(s: BridgeStatus, configured: Boolean, lastReq: Pair<Long,
         Text(label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
       }
       val sub = when {
-        !configured -> "Enter your Worker URL and device token below."
+        !configured -> "Enter your Worker URL below and tap Connect."
         s.pushError != null -> "Tap Re-register to try again."
         s.pushRegisteredAt != null -> "Your assistant wakes this phone with a push message when it needs data. Nothing runs in the background. Registered ${ago(s.pushRegisteredAt)}."
-        else -> "Tap Register device to finish setup."
+        else -> "Tap Re-register to finish setup."
       }
       if (s.pushError != null) Text("Last error: ${s.pushError}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
       Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

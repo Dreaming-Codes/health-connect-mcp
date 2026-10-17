@@ -22,6 +22,16 @@ object Settings {
   fun isConfigured(ctx: Context) = workerUrl(ctx).isNotBlank() && deviceToken(ctx).isNotBlank()
   fun save(ctx: Context, url: String, token: String) =
     prefs(ctx).edit().putString("worker_url", url.trim().trimEnd('/')).putString("device_token", token.trim()).commit()
+  fun deviceId(ctx: Context) = prefs(ctx).getString("device_id", "") ?: ""
+  fun deviceName(ctx: Context) = prefs(ctx).getString("device_name", "") ?: ""
+  fun saveEnrollment(ctx: Context, url: String, e: Enrollment, name: String) = prefs(ctx).edit()
+    .putString("worker_url", url.trim().trimEnd('/')).putString("device_token", e.deviceToken)
+    .putString("device_id", e.deviceId).putString("device_name", name).commit()
+  fun setDeviceName(ctx: Context, name: String) = prefs(ctx).edit().putString("device_name", name).commit()
+  fun clear(ctx: Context) {
+    prefs(ctx).edit().clear().commit()
+    plain(ctx).edit().clear().commit()
+  }
   fun setPush(ctx: Context, at: Long?, err: String?) = plain(ctx).edit().putLong("push_at", at ?: 0L).putString("push_err", err).apply()
   fun pushRegisteredAt(ctx: Context): Long? = plain(ctx).getLong("push_at", 0L).takeIf { it > 0 }
   fun pushError(ctx: Context): String? = plain(ctx).getString("push_err", null)

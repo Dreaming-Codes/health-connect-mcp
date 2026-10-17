@@ -18,6 +18,20 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "HCBridge"
 
+data class Enrollment(val deviceId: String, val deviceToken: String, val linked: Boolean) {
+  companion object {
+    fun parse(o: JSONObject) = Enrollment(o.getString("device_id"), o.getString("device_token"), o.optBoolean("linked"))
+  }
+}
+
+enum class CodeKind(val path: String) { Connector("/phone/connector-code"), Pairing("/phone/pairing-code") }
+
+data class IssuedCode(val code: String, val expiresAt: String, val claimUrl: String?) {
+  companion object {
+    fun parse(o: JSONObject) = IssuedCode(o.getString("code"), o.getString("expires_at"), o.optString("claim_url").ifBlank { null })
+  }
+}
+
 class PhoneFailure(val code: String, message: String) : Exception(message)
 
 object WorkerApi {
@@ -27,8 +41,32 @@ object WorkerApi {
   fun post(ctx: Context, path: String, body: JSONObject): Pair<Int, String> {
     val url = Settings.workerUrl(ctx); val token = Settings.deviceToken(ctx)
     require(url.isNotBlank() && token.isNotBlank()) { "Not configured" }
-    val req = Request.Builder().url(url + path).header("Authorization", "Bearer $token").post(body.toString().toRequestBody(JSON)).build()
+    return send(url, path, body, token)
+  }
+
+  private fun send(url: String, path: String, body: JSONObject, token: String?): Pair<Int, String> {
+    val req = Request.Builder().url(url + path).apply { token?.let { header("Authorization", "Bearer $it") } }.post(body.toString().toRequestBody(JSON)).build()
     http.newCall(req).execute().use { return it.code to (it.body?.string() ?: "") }
+  }
+
+  private fun errorOf(code: Int, body: String) = runCatching { JSONObject(body).getString("error") }.getOrNull() ?: "HTTP $code"
+
+  fun enroll(url: String, name: String, pairingCode: String?): Enrollment {
+    val body = JSONObject().put("name", name).apply { pairingCode?.let { put("pairing_code", it) } }
+    val (code, text) = send(url, "/enroll", body, null)
+    if (code != 200) throw IllegalStateException(errorOf(code, text))
+    return Enrollment.parse(JSONObject(text))
+  }
+
+  fun code(ctx: Context, kind: CodeKind): IssuedCode {
+    val (code, text) = post(ctx, kind.path, JSONObject())
+    if (code != 200) throw IllegalStateException(errorOf(code, text))
+    return IssuedCode.parse(JSONObject(text))
+  }
+
+  fun rename(ctx: Context, name: String) {
+    val (code, text) = post(ctx, "/phone/name", JSONObject().put("name", name))
+    if (code != 200) throw IllegalStateException(errorOf(code, text))
   }
 
   /** Blocking: call off the main thread. */
