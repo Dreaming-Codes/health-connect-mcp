@@ -118,9 +118,11 @@ export class PhoneHub extends DurableObject<Env> {
     await this.ctx.storage.put("name", name);
   }
 
-  async setConnector(hash: string, label: string): Promise<void> {
+  async setConnector(hash: string, label: string): Promise<boolean> {
+    if (!(await this.ctx.storage.get<DeviceAuth>("auth"))) return false;
     await this.ctx.storage.put("connector", { hash, label, created: Date.now() } satisfies ConnectorToken);
     await this.ctx.storage.delete("connectors");
+    return true;
   }
 
   async revoke(): Promise<void> {

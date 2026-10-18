@@ -184,7 +184,9 @@ try {
   const d1 = await claimConnector(base, d.body.device_token);
   const d2 = await claimConnector(base, d.body.device_token);
   check(await mcpStatus(d1.token) === 401 && await mcpStatus(d2.token, "list_threads", {}) !== 401, "claiming a new connector revokes the previous one");
+  const pendingCode = (await (await postAs(d.body.device_token, "/phone/connector-code", {})).json()).code;
   check((await postAs(d.body.device_token, "/phone/disconnect", {})).status === 200, "disconnect succeeds with the device token");
+  check((await postAs(null, "/claim", { code: pendingCode })).status === 400, "a claim code issued before disconnect mints nothing");
   check(await mcpStatus(d2.token) === 401, "connector token is refused after disconnect");
   check((await postAs(d.body.device_token, "/phone/connector-code", {})).status === 401, "device token is refused after disconnect");
   check((await postAs(d.body.device_token, "/phone/disconnect", {})).status === 401, "disconnect cannot be replayed with the revoked token");
