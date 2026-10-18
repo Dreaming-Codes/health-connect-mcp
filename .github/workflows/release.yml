@@ -1,11 +1,18 @@
 name: Release APK
 
+# A pushed v* tag publishes a release. A manual run builds the same APK into a draft release,
+# which creates no tag until someone publishes it.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  # The 0.6.0 and 0.7.0 APKs were signed with this certificate; a different one would not install over them.
+  EXPECTED_CERT_SHA256: 2e9651ba13cd1ddfb3dd16e363be08e827be9a1e5c7d12773c2f3a1e8cd79937
 
 jobs:
   apk:
@@ -14,17 +21,22 @@ jobs:
       run:
         working-directory: android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Check that the tag matches versionName
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Read versionName
         run: |
           version=$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts)
-          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match versionName $version"; exit 1; }
+          test -n "$version"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match versionName $version"; exit 1
+          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "APK=android-connect-$version.apk" >> "$GITHUB_ENV"
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)" >> "$GITHUB_ENV"
       - name: Write signing and Firebase config
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -42,12 +54,23 @@ jobs:
             echo "keyPassword=$ANDROID_KEY_PASSWORD"
           } > keystore.properties
       - run: ./gradlew --no-daemon assembleRelease
-      - name: Verify the signature
+      - name: Check the APK version and signing certificate
         run: |
-          apk=app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME"/build-tools | sort -V | tail -1)/apksigner verify --print-certs "$apk"
-          mv "$apk" "android-connect-$VERSION.apk"
-      - name: Publish the release
+          mv app/build/outputs/apk/release/app-release.apk "$APK"
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -1 | grep -F "versionName='$VERSION'"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee certs.txt
+          grep -qF "certificate SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
+          sha256sum "$APK" > "$APK.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-connect-${{ env.VERSION }}
+          path: |
+            android/${{ env.APK }}
+            android/${{ env.APK }}.sha256
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "android-connect-$VERSION.apk" --title "Android Connect $VERSION" --generate-notes
+        run: |
+          draft=$([ "$GITHUB_EVENT_NAME" = push ] || echo --draft)
+          gh release create "v$VERSION" "$APK" "$APK.sha256" $draft --target "$GITHUB_SHA" \
+            --title "Android Connect $VERSION" --generate-notes
