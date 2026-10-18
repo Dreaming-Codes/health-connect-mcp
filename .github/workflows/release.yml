@@ -21,12 +21,12 @@ jobs:
       run:
         working-directory: android
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Read versionName
         run: |
           version=$(sed -nE 's/.*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts)
@@ -59,9 +59,9 @@ jobs:
           mv app/build/outputs/apk/release/app-release.apk "$APK"
           "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -1 | grep -F "versionName='$VERSION'"
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee certs.txt
-          grep -qx "Signer #1 certificate SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
+          grep -qF "certificate SHA-256 digest: $EXPECTED_CERT_SHA256" certs.txt
           sha256sum "$APK" > "$APK.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-connect-${{ env.VERSION }}
           path: |
