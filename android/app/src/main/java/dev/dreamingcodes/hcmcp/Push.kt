@@ -68,6 +68,9 @@ object WorkerApi {
 
   fun connectorCode(ctx: Context) = IssuedCode.parse(post(ctx, "/phone/connector-code", JSONObject()).okJson())
 
+  // A 401 means the keys were already revoked, which is the state Disconnect wants.
+  fun revoke(ctx: Context): Boolean = post(ctx, "/phone/disconnect", JSONObject()).first.let { it == 200 || it == 401 }
+
   fun rename(ctx: Context, name: String) {
     post(ctx, "/phone/name", JSONObject().put("name", name)).okJson()
   }
@@ -107,6 +110,9 @@ class PushService : FirebaseMessagingService() {
     val d = msg.data
     val id = d["id"] ?: return
     val method = d["method"] ?: return
+    // A hub left behind by an earlier enrollment may still hold this FCM token; only the current enrollment may drive the phone.
+    val current = Settings.deviceId(this)
+    if (current.isBlank() || d["device_id"] != current) { Log.w(TAG, "dropped push for another enrollment"); return }
     val reply = JSONObject()
     runBlocking {
       try {

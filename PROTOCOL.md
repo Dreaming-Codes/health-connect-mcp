@@ -13,7 +13,8 @@ Sent when the user taps **Register device** and on every FCM token refresh (`onN
 
 ## 2. Request (Worker → phone, FCM)
 For each MCP tool call the DO creates a UUID and sends a high-priority FCM **data** message (TTL 20 s) via FCM HTTP v1:
-`data = {"id":"<uuid>","method":"get_steps","params":"<JSON string>"}`. The message never contains health data.
+`data = {"id":"<uuid>","device_id":"<16 hex>","method":"get_steps","params":"<JSON string>"}`. The message never contains health data.
+The app runs a push only when `device_id` equals its current enrollment, so a `PhoneHub` left behind by an earlier enrollment cannot drive the phone even if it still holds the FCM token.
 
 ## 3. Answer: `POST /phone/result/<id>`
 Body `{"result":{…}}` or `{"error":{"code":"…","message":"…"}}` → `200 {"ok":true}`, or `410` when the id is unknown or has expired.
@@ -134,6 +135,7 @@ Design and tradeoffs: `docs/enrollment.md`.
 | `POST /enroll` | none | `{name}` | `{device_id, device_token}` |
 | `POST /phone/connector-code` | device token | `{}` | `{code, expires_at, claim_url}` |
 | `POST /phone/name` | device token | `{name}` | `{ok}` |
+| `POST /phone/disconnect` | device token | `{}` | `{ok}`; wipes the phone's `PhoneHub`, so its device token, connector token and FCM registration stop working |
 | `POST /claim` or `GET /claim?code=` | none | `{code}` | `{name, mcp_url, transport, headers:{Authorization}}` |
 
 - Tokens are `hcd_<device_id>_<secret>` (device) and `hco_<device_id>_<secret>` (connector). Only SHA-256 hashes of
@@ -142,6 +144,7 @@ Design and tradeoffs: `docs/enrollment.md`.
   case-insensitive and `O`/`I`/`L` read as `0`/`1`.
 - `/enroll` allows 10 requests per client IP per hour, and `/claim` allows 20.
 - A connector token reaches only its own phone and works only on `/mcp`. A device token works only on `/phone/*`.
+- A phone has at most one connector token. Each claim replaces the previous one.
 
 ## Secrets (Worker)
 `FCM_SERVICE_ACCOUNT` (Firebase service-account JSON; RS256 JWT is signed with WebCrypto and the OAuth token is cached

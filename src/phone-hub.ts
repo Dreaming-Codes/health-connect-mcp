@@ -43,6 +43,7 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; time
 type OAuthToken = { token: string; expiresAt: number };
 type DeviceAuth = { token_hash: string };
 type ConnectorToken = { hash: string; label: string; created: number };
+type FcmRegistration = { token: string; registered_at: number; device_id?: string };
 type DeviceInfo = { app_version?: string; device?: string; mode?: string; ts: number };
 type DeviceView = Omit<DeviceInfo, "ts"> & { updated_at: string };
 type PhoneStatus = {
@@ -117,9 +118,16 @@ export class PhoneHub extends DurableObject<Env> {
     await this.ctx.storage.put("name", name);
   }
 
-  async addConnector(hash: string, label: string): Promise<void> {
-    const tokens = (await this.ctx.storage.get<ConnectorToken[]>("connectors")) ?? [];
-    await this.ctx.storage.put("connectors", [...tokens, { hash, label, created: Date.now() }]);
+  async setConnector(hash: string, label: string): Promise<void> {
+    await this.ctx.storage.put("connector", { hash, label, created: Date.now() } satisfies ConnectorToken);
+    await this.ctx.storage.delete("connectors");
+  }
+
+  async revoke(): Promise<void> {
+    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new PhoneError("phone disconnected")); }
+    this.pending.clear();
+    this.oauth = undefined;
+    await this.ctx.storage.deleteAll();
   }
 
   async authorize(kind: TokenKind, hash: string): Promise<boolean> {
@@ -127,16 +135,16 @@ export class PhoneHub extends DurableObject<Env> {
       const a = await this.ctx.storage.get<DeviceAuth>("auth");
       return !!a && safeEqual(a.token_hash, hash);
     }
-    const tokens = (await this.ctx.storage.get<ConnectorToken[]>("connectors")) ?? [];
-    return tokens.some((t) => safeEqual(t.hash, hash));
+    const c = await this.ctx.storage.get<ConnectorToken>("connector");
+    return !!c && safeEqual(c.hash, hash);
   }
 
   async setName(name: string): Promise<void> {
     await this.ctx.storage.put("name", name);
   }
 
-  async register(info: Registration): Promise<void> {
-    await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now() });
+  async register(deviceId: string, info: Registration): Promise<void> {
+    await this.ctx.storage.put("fcm", { token: info.fcm_token, registered_at: Date.now(), device_id: deviceId } satisfies FcmRegistration);
     await this.ctx.storage.put("device", { app_version: info.app_version, device: info.device, mode: info.mode, ts: Date.now() } satisfies DeviceInfo);
     await this.ctx.storage.put("lastSeen", Date.now());
   }
@@ -167,7 +175,7 @@ export class PhoneHub extends DurableObject<Env> {
   async status(tz: string): Promise<PhoneStatus> {
     const at = (ms: number | undefined) => (ms ? formatIn(ms, tz) : null);
     const device = await this.ctx.storage.get<DeviceInfo>("device");
-    const fcm = await this.ctx.storage.get<{ token: string; registered_at: number }>("fcm");
+    const fcm = await this.ctx.storage.get<FcmRegistration>("fcm");
     const lastPush = await this.ctx.storage.get<{ latency_ms: number; at: number }>("lastPush");
     const name = await this.ctx.storage.get<string>("name");
     return {
@@ -184,7 +192,7 @@ export class PhoneHub extends DurableObject<Env> {
   async call(method: string, params: unknown): Promise<unknown> {
     const id = crypto.randomUUID();
     const lastSeen = async () => isoOrNull(await this.lastSeen()) ?? "never";
-    const fcm = await this.ctx.storage.get<{ token: string }>("fcm");
+    const fcm = await this.ctx.storage.get<FcmRegistration>("fcm");
     const sa = this.serviceAccount();
     if (!fcm || !sa) throw new PhoneError(`phone offline (last seen ${await lastSeen()}; ${!fcm ? "no push registration" : "push not configured on server"})`);
     const timeoutMs = Number(this.env.PUSH_TIMEOUT_MS ?? 20000);
@@ -196,7 +204,7 @@ export class PhoneHub extends DurableObject<Env> {
       this.pending.set(id, { resolve, reject, timer, sentAt: Date.now() });
     });
     try {
-      await sendData(sa, await this.accessToken(sa), fcm.token, { id, method, params: JSON.stringify(params ?? {}) }, Math.ceil(timeoutMs / 1000), this.env.FCM_ENDPOINT);
+      await sendData(sa, await this.accessToken(sa), fcm.token, { id, device_id: fcm.device_id ?? "", method, params: JSON.stringify(params ?? {}) }, Math.ceil(timeoutMs / 1000), this.env.FCM_ENDPOINT);
     } catch (e: any) {
       const p = this.pending.get(id);
       if (p) { clearTimeout(p.timer); this.pending.delete(id); }

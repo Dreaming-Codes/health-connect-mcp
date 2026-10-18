@@ -38,12 +38,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.tasks.Tasks
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -151,9 +154,19 @@ fun BridgeScreen() {
     }
   }
   fun disconnect() {
-    Settings.clear(ctx)
-    savedUrl = ""; savedDeviceId = ""; savedName = ""
-    BridgeState.set { it.copy(pushRegisteredAt = null, pushError = null) }
+    busy = true
+    scope.launch {
+      val revoked = withContext(Dispatchers.IO) {
+        val r = runCatching { WorkerApi.revoke(ctx) }.getOrDefault(false)
+        runCatching { Tasks.await(FirebaseMessaging.getInstance().deleteToken(), 20, TimeUnit.SECONDS) }
+        Settings.clear(ctx)
+        r
+      }
+      busy = false
+      savedUrl = ""; savedDeviceId = ""; savedName = ""
+      BridgeState.set { it.copy(pushRegisteredAt = null, pushError = null) }
+      snackbar.showSnackbar(if (revoked) "Disconnected. This phone's keys no longer work." else "Disconnected here, but the Worker could not be reached to revoke the keys. They can no longer reach this phone.")
+    }
   }
 
   issued?.let { CodeDialog(it, savedName.ifBlank { name }) { issued = null } }
@@ -196,7 +209,7 @@ fun BridgeScreen() {
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               OutlinedButton(onClick = { scope.launch { registerPush() } }, enabled = !status.registering) { Text("Re-register") }
-              TextButton(onClick = { disconnect() }) { Text("Disconnect") }
+              TextButton(onClick = { disconnect() }, enabled = !busy) { Text("Disconnect") }
             }
           }
         }

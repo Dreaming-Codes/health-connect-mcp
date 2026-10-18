@@ -24,7 +24,7 @@ A connector reaches exactly one phone. To add a second phone, enroll it the same
   - device token `hcd_<device_id>_<secret>`
   - connector token `hco_<device_id>_<secret>`
   The id routes the request to that phone's `PhoneHub`, so the Worker has no token table and no singleton. The secret is 32 random bytes, and only its SHA-256 hash is stored. `parseToken` is the only code that reads the format.
-- `PhoneHub` (one per phone, `idFromName(device_id)`) owns the device token hash, the connector token hashes with their labels, the name, the FCM registration, pending calls and notification events.
+- `PhoneHub` (one per phone, `idFromName(device_id)`) owns the device token hash, the connector token hash with its label, the name, the FCM registration, pending calls and notification events.
 - `CodeTicket` (one per claim code, `idFromName(code)`) holds `{device_id, expires}` and deletes itself on the first read or after 10 minutes. Codes are 8 Crockford base32 characters (40 bits).
 - `Gate` (one per client IP and route) is a fixed-window counter: 10 enrollments and 20 claims per hour.
 - A device token works only on `/phone/*`, and a connector token works only on `/mcp`.
