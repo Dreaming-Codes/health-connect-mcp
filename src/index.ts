@@ -31,7 +31,7 @@ const PHONE_ROUTES = new Map<string, (r: DeviceRequest) => Promise<Response>>([
   ["/phone/register", async ({ env, deviceId, hub, body }) => {
     const reg = Registration.safeParse(body);
     if (!reg.success) return json({ error: "fcm_token required" }, 400);
-    await hub.register(reg.data);
+    await hub.register(deviceId, reg.data);
     return json({ ok: true, push_configured: !!env.FCM_SERVICE_ACCOUNT, device_id: deviceId });
   }],
   ["/phone/event", async ({ hub, body }) => {
@@ -44,6 +44,10 @@ const PHONE_ROUTES = new Map<string, (r: DeviceRequest) => Promise<Response>>([
     const n = DeviceName.safeParse((body as { name?: unknown }).name);
     if (!n.success) return json({ error: "name must be 1-60 characters" }, 400);
     await hub.setName(n.data);
+    return json({ ok: true });
+  }],
+  ["/phone/disconnect", async ({ hub }) => {
+    await hub.revoke();
     return json({ ok: true });
   }],
   ["/phone/connector-code", async ({ req, env, deviceId }) => {
@@ -95,7 +99,7 @@ async function handleClaim(req: Request, env: Env): Promise<Response> {
   const hub = phoneHub(env, t.device_id);
   const name = `Android Connect (${(await hub.displayName()) ?? "phone"})`;
   const { token, hash } = await mintToken("connector", t.device_id);
-  await hub.addConnector(hash, name);
+  if (!(await hub.setConnector(hash, name))) return json({ error: "invalid or expired code" }, 400);
   return json({ name, mcp_url: `${new URL(req.url).origin}/mcp`, transport: "streamable-http", headers: { Authorization: `Bearer ${token}` } }, 200, { "Cache-Control": "no-store" });
 }
 

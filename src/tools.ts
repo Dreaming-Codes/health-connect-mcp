@@ -25,7 +25,7 @@ const response = ({ at, received_at, ...e }: StoredEvent, tz: string) =>
 const failure = (e: unknown) => ({ isError: true, content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }] });
 
 export function buildServer(hub: Hub): McpServer {
-  const server = new McpServer({ name: "android-connect", version: "0.7.0" });
+  const server = new McpServer({ name: "android-connect", version: "0.7.1" });
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (args: ShapeOutput<S>) => Promise<unknown>) =>
     server.registerTool(name, { description, inputSchema: shape as z.ZodRawShape }, async (args) => {
       try {
