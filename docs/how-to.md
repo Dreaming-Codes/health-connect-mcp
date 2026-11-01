@@ -53,25 +53,12 @@ Grok Bot calls `start_call` with its `agent_id` and a `reason`. The phone shows 
 
 If the phone has a PIN, a pattern, or biometrics, unlock it after you tap **Answer**. Android does not let another app open over a secure lock screen.
 
-## Get the phone's location
-
-1. On the **Phone access** card, allow **Location**.
-2. Allow **Location while the app is closed** and choose **Allow all the time**.
-
-The assistant calls `get_location`. A fix newer than `max_age_s` comes back at once. Otherwise the phone waits up to `timeout_s` for a new fix. A push wakes the app in the background, so Android gives it a location only with **Allow all the time**.
-
 ## Read and send text messages
 
 1. On the **Phone access** card, allow **Read and send SMS**.
 2. If Android refuses, open **App info**, tap **⋮ > Allow restricted settings**, and allow again.
 
 The assistant calls `list_threads`, `list_messages`, `send_message`, and `reply_to_thread`. Sent messages report `sent` and `delivered`. Only SMS and MMS are visible. Google Messages keeps RCS chats in its own storage, which other apps cannot read.
-
-## Search contacts
-
-On the **Phone access** card, allow **Contacts**.
-
-The assistant calls `search_contacts` with a name or a number. With contacts access, `list_messages` and `list_threads` also show contact names.
 
 ## Add another phone
 

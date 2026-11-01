@@ -43,11 +43,9 @@ const branchCases = [
   ["get_notification_responses", {}], ["get_notification_responses", { wait_seconds: 21 }], ["get_notification_responses", { since: "nope" }],
   ["start_call", { agent_id: "agent_1", reason: "Standup in 5" }], ["start_call", { agent_id: "bad id", reason: "x" }], ["start_call", { agent_id: "a" }],
   ["start_call", { agent_id: "a", reason: "x".repeat(141) }], ["start_call", { agent_id: "a", reason: "x", ring_seconds: 61 }],
-  ["get_location", {}], ["get_location", { accuracy: "high", max_age_s: -1 }],
   ["list_threads", {}], ["list_messages", { box: "inbox", since: "2026-10-12" }], ["list_messages", { since: "2026-10-13", until: "2026-10-12" }], ["list_messages", { box: "spam" }],
   ["send_message", { to: "+31 6 1234 5678", text: "hi" }], ["send_message", { to: "abc", text: "hi" }], ["send_message", { to: "+316", text: "" }],
   ["reply_to_thread", { thread_id: 3, text: "hi" }], ["reply_to_thread", { thread_id: 0, text: "hi" }],
-  ["search_contacts", { query: "Ann" }], ["search_contacts", { query: "" }],
 ];
 for (const [n, a] of [["get_steps", r], ["get_steps", { start: "13/10/2026", end: "2026-10-14" }], ["get_steps", { start: "2026-10-13", end: "2026-10-12" }],
   ["get_steps", { ...r, timezone: "Mars/Base" }], ["read_records", { ...r, recordType: "Bogus" }], ["get_phone_status", {}],

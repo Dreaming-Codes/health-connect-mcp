@@ -72,3 +72,10 @@ Forks decided without waiting for review, each with its reason. Change any of th
 - **Each push names its enrollment.** The hub sends the `device_id` it registered under, and the app drops a push whose `device_id` is not its own. No secret is needed: only the Worker can send through FCM, and a hub only stamps its own id. This also shuts out hubs left behind by 0.7.0 and earlier, which the Worker cannot find.
 - **One connector per phone.** A claim replaces the stored connector, so re-pairing revokes the old key. Connectors claimed before 0.7.1 were stored as a list under another key and stop working at the deploy; claim once more with **Register with Grok Bot**.
 - **No FCM-token index.** Revoking by FCM token on the Worker would need a new Durable Object class and still miss hubs registered before it existed. The push check covers both.
+
+## Contacts and location removed (0.8.0)
+- **Grok Bot reads contacts and location natively**, so `get_location` and `search_contacts` are gone from the Worker and the app. The app drops `Location.kt`, `Contacts.kt`, `READ_CONTACTS`, the three location permissions, the `android.hardware.location` feature, their **Phone access** rows, and the `location`, `background_location` and `contacts` fields of the phone's capabilities.
+- **SMS tools return numbers only.** `list_threads` loses `names` and `list_messages` loses `contact_name`. Looking up names would need `READ_CONTACTS`, which is the permission this change removes.
+- **`test/budgets.mjs` now checks the SMS chain.** With `get_location` gone, the longest wait inside a push is `send_message`: 8 s for the sent report plus 4 s for delivery. That must end inside the 15 s dispatch budget, which must end before the Worker's 20 s push timeout.
+- **A 0.7.x app keeps its location and contacts permissions until it updates.** The Worker no longer exposes the tools that used them, and an update to 0.8.0 removes the permissions from the manifest.
+- **Version 0.8.0.** Two tools and two response fields are removed, so the version moves up a minor step.

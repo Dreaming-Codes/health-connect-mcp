@@ -1,6 +1,6 @@
 # About the architecture and privacy
 
-Android Connect answers one question: how can an assistant in the cloud use a phone that sleeps most of the time, without keeping a copy of the phone's data? The answer is a live pull. The Worker holds no health data, no notifications, no messages, no contacts, and no locations. It asks the phone when a tool needs something, and it forwards the answer to the MCP client.
+Android Connect answers one question: how can an assistant in the cloud use a phone that sleeps most of the time, without keeping a copy of the phone's data? The answer is a live pull. The Worker holds no health data, no notifications, and no messages. It asks the phone when a tool needs something, and it forwards the answer to the MCP client.
 
 ## How a request flows
 

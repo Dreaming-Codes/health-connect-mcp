@@ -64,17 +64,16 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
   }
 
   private fun listThreads(p: JSONObject): JSONObject {
-    val tz = p.zone(); val names = ContactNames(ctx)
+    val tz = p.zone()
     val list = threads(limit = p.optInt("limit", 20).coerceIn(1, 100))
     return JSONObject().put("timezone", tz.id).put("threads", JSONArray(list.map { t ->
       JSONObject().put("thread_id", t.id).put("addresses", JSONArray(t.addresses))
-        .put("names", JSONArray(t.addresses.map { names.nameFor(it) ?: JSONObject.NULL }))
         .put("group", t.addresses.size > 1).put("snippet", t.snippet).put("date", iso(t.date, tz)).put("message_count", t.messageCount)
     }))
   }
 
   private fun listMessages(p: JSONObject): JSONObject {
-    val tz = p.zone(); val names = ContactNames(ctx)
+    val tz = p.zone()
     val box = runCatching { SmsBox.valueOf(p.optString("box", "all")) }.getOrElse { throw BadParams("invalid box") }
     val limit = p.optInt("limit", 50).coerceIn(1, 500)
     val thread = p.optLong("thread_id", 0).takeIf { it > 0 }
@@ -83,7 +82,7 @@ class MessagesHandler(private val ctx: Context) : MethodGroup {
     val messages = (sms(box, thread, digits, since, until, limit) + mms(box, thread, digits, since, until, limit)).sortedByDescending { it.date }.take(limit)
     return JSONObject().put("timezone", tz.id).put("count", messages.size).put("messages", JSONArray(messages.map { m ->
       JSONObject().put("id", m.id).put("kind", m.kind).put("thread_id", m.threadId).put("address", m.address)
-        .put("contact_name", names.nameFor(m.address)).put("date", iso(m.date, tz)).put("box", BOX_NAMES[m.box] ?: "other")
+        .put("date", iso(m.date, tz)).put("box", BOX_NAMES[m.box] ?: "other")
         .put("read", m.read).put("text", m.text)
     }))
   }

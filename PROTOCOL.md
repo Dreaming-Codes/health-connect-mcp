@@ -47,12 +47,10 @@ phone or the Worker formats it.
 | `perform_notification_action` | `key`, `action` (index ≥ 0 or `"content"`), `replyText` | `{key, sent, opens_activity}` |
 | `send_notification` | `title`, `text`, `channel`, `importance` (min/low/default/high), `silent`, `alarm`, `insistent`, `vibrate`, `tag`, `actions[{id,label,reply?{placeholder}}]` ≤3 | `{notification_id, channel_id}`; alarms add `{alarm_volume, alarm_volume_max, bypass_dnd, dnd_filter, warning?}` |
 | `start_call` | `call_id`, `agent_id`, `caller_name`, `reason` ≤140, `ring_seconds` 5–60 | `{call_id, ringing, full_screen, grok_bot_installed}` |
-| `get_location` | `max_age_s`, `timeout_s` ≤12, `timezone` | `{latitude, longitude, accuracy_m, altitude_m, speed_mps, bearing_deg, time, age_s, provider, source:"last_known"\|"current"}` |
-| `list_threads` | `limit`, `timezone` | `{threads:[{thread_id, addresses, names, group, snippet, date, message_count, read}]}` |
-| `list_messages` | `thread_id`, `address`, `since`, `until`, `box` (all/inbox/sent), `limit` ≤500, `timezone` | `{count, messages:[{id, kind:"sms"\|"mms", thread_id, address, contact_name, box, date, text, read}]}` |
+| `list_threads` | `limit`, `timezone` | `{threads:[{thread_id, addresses, group, snippet, date, message_count, read}]}` |
+| `list_messages` | `thread_id`, `address`, `since`, `until`, `box` (all/inbox/sent), `limit` ≤500, `timezone` | `{count, messages:[{id, kind:"sms"\|"mms", thread_id, address, box, date, text, read}]}` |
 | `send_message` | `to`, `text` | `{to, parts, sent, delivered, error_code}` |
 | `reply_to_thread` | `thread_id`, `text` | same as `send_message` |
-| `search_contacts` | `query`, `limit` | `{contacts:[{id, name, phones:[{number, type}], emails:[{address, type}]}]}` |
 
 Values Health Connect lacks are omitted or `null`. The phone app must never log values, only method names.
 
@@ -113,15 +111,14 @@ intent to the app's own `IncomingCallActivity`, which shows over the lock screen
 Grok Bot at `grokbot://app/v1/voice-call?id=<agent_id>`, falling back to `/v1/agent?id=` and then the launcher.
 `reason` is shown under the caller name and as the notification text; it is never logged.
 
-### SMS and contacts
+### SMS
 Read from the Telephony provider. RCS chats are not in the provider and are not returned. MMS returns text parts
 only. `send_message` splits long text with `SmsManager.divideMessage` and waits up to 8 s for sent and 4 s for
-delivered reports. Contact names are added to messages when contacts permission is granted; otherwise only the raw
-address. Message bodies, numbers and contact data are never logged.
+delivered reports. Messages and threads carry phone numbers only. Message bodies and numbers are never logged.
 
-Other error codes: `notifications_permission_missing`, `channel_blocked`, `location_permission_missing`,
-`background_location_missing`, `location_disabled`, `location_unavailable`, `sms_permission_missing`, `group_thread`,
-`contacts_permission_missing`. An app older than 0.4.0 answers new methods with `unknown_method`.
+Other error codes: `notifications_permission_missing`, `channel_blocked`, `sms_permission_missing`, `group_thread`.
+An app older than 0.4.0 answers new methods with `unknown_method`, and so does 0.8.0 for the removed `get_location` and
+`search_contacts`.
 
 
 `get_phone_status` (MCP) returns `{timezone, name, mode:"push"|"none", push_registered, push_registered_at,

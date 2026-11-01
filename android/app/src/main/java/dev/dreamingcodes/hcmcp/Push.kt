@@ -93,7 +93,7 @@ object WorkerApi {
 }
 
 suspend fun dispatch(ctx: Context, method: String, params: JSONObject): Any {
-  val groups = listOf(HealthHandler(ctx), NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), LocationHandler(ctx), MessagesHandler(ctx), ContactsHandler(ctx))
+  val groups = listOf(HealthHandler(ctx), NotificationHandler(ctx), BotNotifications(ctx), CallHandler(ctx), MessagesHandler(ctx))
   val run = groups.firstNotNullOfOrNull { it.methods[method] } ?: throw PhoneFailure("unknown_method", method)
   return run(params)
 }

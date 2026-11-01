@@ -25,11 +25,9 @@ function answer(method, params) {
     case "perform_notification_action": return { result: { key: params.key, sent: true, opens_activity: false } };
     case "send_notification": return { result: { notification_id: params.tag ?? "nsim0001", channel_id: params.alarm ? "bot_alarm" : "bot_assistant_default" } };
     case "start_call": return { result: { call_id: params.call_id, ringing: true, full_screen: true } };
-    case "get_location": return { result: { latitude: 52.37, longitude: 4.89, accuracy_m: 12, source: "current" } };
     case "list_threads": return { result: { threads: [{ thread_id: 3, addresses: ["+31600000000"], group: false }] } };
     case "list_messages": return { result: { count: 0, messages: [] } };
     case "send_message": case "reply_to_thread": return { result: { to: params.to ?? "+31600000000", parts: 1, sent: "sent", delivered: "pending" } };
-    case "search_contacts": return { error: { code: "contacts_permission_missing", message: "contacts permission is not granted" } };
     default: return { result: { method } };
   }
 }
@@ -100,10 +98,11 @@ try {
   const t0 = Date.now();
   r = await call("get_notification_responses", { notification_id: "poll1", wait_seconds: 10 });
   check(r.json?.responses?.[0]?.reply_text === "sounds good" && Date.now() - t0 < 8000, "get_notification_responses long-polls until a reply arrives");
+  const offsetNow = (tz) => new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" }).formatToParts(new Date()).find((x) => x.type === "timeZoneName").value.slice(3);
   const zoned = (v, offset) => typeof v === "string" && v.endsWith(offset) && !Number.isNaN(Date.parse(v));
   r = await call("get_notification_responses", { notification_id: "poll1", timezone: "America/Los_Angeles" });
   const resp = r.json?.responses?.[0] ?? {};
-  check(zoned(resp.phone_time, "-07:00") && zoned(resp.received_at, "-07:00") && !("at" in resp), "get_notification_responses gives phone_time and received_at in the timezone");
+  check(zoned(resp.phone_time, offsetNow("America/Los_Angeles")) && zoned(resp.received_at, offsetNow("America/Los_Angeles")) && !("at" in resp), "get_notification_responses gives phone_time and received_at in the timezone");
   check((await post("/phone/event", { notification_id: "poll1" })).status === 400, "malformed event is rejected");
   check((await fetch(base + "/phone/event", { method: "POST", headers: { Authorization: "Bearer nope" }, body: "{}" })).status === 401, "event needs the device token");
 
@@ -111,15 +110,13 @@ try {
   check(!r.error && last().params.alarm === true && last().params.insistent === true, "alarm notification forwards alarm and insistent");
 
   r = await call("start_call", { agent_id: "answer-me", reason: "Your 9:00 starts in 5 minutes", ring_seconds: 5 });
-  check(r.json?.outcome === "answered" && r.json.call_id?.startsWith("call-") && zoned(r.json.phone_time, "+02:00"), "start_call waits for answered");
+  check(r.json?.outcome === "answered" && r.json.call_id?.startsWith("call-") && zoned(r.json.phone_time, offsetNow("Europe/Amsterdam")), "start_call waits for answered");
   check(!("timezone" in last().params), "start_call keeps timezone on the Worker");
   r = await call("start_call", { agent_id: "nobody", reason: "Ping", ring_seconds: 5 });
   check(r.json?.outcome === "missed", "start_call reports missed after ring_seconds + grace");
   r = await call("start_call", { agent_id: "bad id!", reason: "x" });
   check(r.error, "start_call rejects an invalid agent_id");
 
-  r = await call("get_location", {});
-  check(!r.error && r.json.latitude === 52.37 && last().params.max_age_s === 120 && last().params.timezone === "Europe/Amsterdam", "get_location round trip with defaults");
   r = await call("get_phone_status", { timezone: "Asia/Tokyo" });
   check(r.json?.timezone === "Asia/Tokyo" && zoned(r.json.last_seen, "+09:00") && zoned(r.json.push_registered_at, "+09:00") && zoned(r.json.last_push?.at, "+09:00") && zoned(r.json.device?.updated_at, "+09:00") && !("ts" in r.json.device), "get_phone_status times follow timezone");
   r = await call("get_phone_status", { timezone: "Mars/Olympus" });
@@ -132,8 +129,6 @@ try {
   check(!r.error && r.json.sent === "sent", "send_message round trip");
   r = await call("reply_to_thread", { thread_id: 3, text: "hello" });
   check(!r.error, "reply_to_thread round trip");
-  r = await call("search_contacts", { query: "Ann" });
-  check(r.error && r.text.includes("contacts_permission_missing"), "search_contacts surfaces a missing permission");
 
   const online = async (bearer, label, fcm = `sim-fcm-${label}-0123456789`) => {
     phones.set(fcm, { bearer, label, deviceId: bearer.split("_")[1] });

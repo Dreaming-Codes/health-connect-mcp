@@ -1,6 +1,6 @@
 # MCP tool reference
 
-The Worker exposes 20 tools on `/mcp`. Every tool returns one text content item that holds JSON. A failed call returns `isError: true` with the error message as text.
+The Worker exposes 18 tools on `/mcp`. Every tool returns one text content item that holds JSON. A failed call returns `isError: true` with the error message as text.
 
 This file is generated from the live tool list. To regenerate it, run `npm run docs:tools`.
 
@@ -33,16 +33,6 @@ Heart rate: min/avg/max per bucket, plus resting HR when available.
 | `end` | string | yes |  | Exclusive end, same formats as start (a plain date means local midnight starting that day) |
 | `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for day buckets and returned times (default Europe/Amsterdam) |
 | `bucket` | `none`, `hour`, `day` | no | `"day"` | Aggregation bucket |
-
-## `get_location`
-
-The phone's current location (GPS/network fix), or the last known fix if a fresh one is not available in time.
-
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `max_age_s` | integer, ≥ 0, ≤ 86400 | no | `120` | Accept a cached fix up to this old instead of waiting for a new one |
-| `timeout_s` | integer, ≥ 1, ≤ 12 | no | `10` |  |
-| `timezone` | string | no | `"Europe/Amsterdam"` | IANA timezone for returned times (default Europe/Amsterdam) |
 
 ## `get_notification_responses`
 
@@ -106,7 +96,7 @@ Weight measurements (kg) in the range.
 
 ## `list_messages`
 
-SMS and MMS messages, newest first. Contact names are added when contacts permission is granted. MMS returns text parts only. Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.
+SMS and MMS messages, newest first. MMS returns text parts only. Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -168,15 +158,6 @@ Send an SMS to the other party of a one-to-one thread from list_threads. Group t
 |---|---|---|---|---|
 | `thread_id` | integer, ≥ 1, ≤ 9007199254740991 | yes |  |  |
 | `text` | string, ≤ 5000 chars | yes |  | Message text; long text is sent as a multipart SMS |
-
-## `search_contacts`
-
-Find contacts by name or phone number. Returns names, phone numbers with their type, and email addresses.
-
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `query` | string, ≤ 100 chars | yes |  |  |
-| `limit` | integer, ≥ 1, ≤ 50 | no | `10` |  |
 
 ## `send_message`
 
