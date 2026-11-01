@@ -60,6 +60,8 @@ If the phone has a PIN, a pattern, or biometrics, unlock it after you tap **Answ
 
 The assistant calls `list_threads`, `list_messages`, `send_message`, and `reply_to_thread`. Sent messages report `sent` and `delivered`. Only SMS and MMS are visible. Google Messages keeps RCS chats in its own storage, which other apps cannot read.
 
+To show contact names next to numbers, also allow **Contact names in SMS** on the **Phone access** card.
+
 ## Add another phone
 
 1. On the new phone, install the app, enter the same **Worker URL**, and tap **Connect**.

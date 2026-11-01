@@ -10,7 +10,7 @@ Android Connect lets Grok Bot, or any MCP client, read and act on your Android p
 - Read, dismiss, and act on notifications, including inline replies.
 - Send its own notifications with buttons and reply fields, or ring like an alarm through silent mode.
 - Call you with a full-screen incoming-call screen that opens a Grok Bot voice call when you answer.
-- Read SMS and MMS threads, send texts, and reply to threads.
+- Read SMS and MMS threads with contact names, send texts, and reply to threads.
 - Connect several phones, each as its own connector.
 
 Each capability needs its own Android permission, and the app asks for each one on its own card.

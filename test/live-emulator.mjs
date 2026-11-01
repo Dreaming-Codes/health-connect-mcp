@@ -22,6 +22,23 @@ async function waitFor(re, ms) {
 
 let failures = 0;
 const check = (ok, label, detail) => { console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok || detail === undefined ? "" : "  -> " + JSON.stringify(detail).slice(0, 300)}`); if (!ok) failures++; };
+function seedContact(name, phone) {
+  adb("shell", "content", "insert", "--uri", "content://com.android.contacts/raw_contacts", "--bind", "account_type:n:", "--bind", "account_name:n:");
+  const id = adb("shell", "content", "query", "--uri", "content://com.android.contacts/raw_contacts", "--projection", "_id").match(/_id=(\d+)\s*$/)[1];
+  const data = (mime, ...binds) => adb("shell", "content", "insert", "--uri", "content://com.android.contacts/data", "--bind", `raw_contact_id:i:${id}`, "--bind", `mimetype:s:${mime}`, ...binds.flatMap((b) => ["--bind", b]));
+  data("vnd.android.cursor.item/name", `data1:s:'${name}'`);
+  data("vnd.android.cursor.item/phone_v2", `data1:s:${phone}`, "data2:i:2");
+}
+async function contactsReady() {
+  for (const end = Date.now() + 300000; Date.now() < end; await sleep(5000)) {
+    const out = adb("shell", "content query --uri content://com.android.contacts/data/phones --projection display_name 2>&1");
+    if (!/Could not find provider|Exception/.test(out)) return out;
+  }
+  throw new Error("contacts provider did not start");
+}
+for (let tries = 3; !(await contactsReady()).includes("Ann Example") && tries > 0; tries--) {
+  try { seedContact("Ann Example", "5551234"); } catch (e) { console.log(`seedContact retry: ${e.message.split("\n")[0]}`); await sleep(10000); }
+}
 adb("shell", "input", "keyevent", "WAKEUP"); adb("shell", "wm", "dismiss-keyguard");
 adb("shell", "am", "start", "-W", "-n", `${P}/.MainActivity`);
 await waitFor(/text="Worker URL"/, 120000);
@@ -45,7 +62,7 @@ check(claimed.headers?.Authorization?.startsWith("Bearer hco_"), "claim code fro
 adb("shell", "input", "swipe", "360", "1200", "360", "300", "300"); await sleep(3000);
 adb("shell", "input", "swipe", "360", "1200", "360", "300", "300"); await sleep(3000);
 shot("permission-cards");
-for (const perm of ["POST_NOTIFICATIONS", "READ_SMS", "SEND_SMS"])
+for (const perm of ["POST_NOTIFICATIONS", "READ_SMS", "SEND_SMS", "READ_CONTACTS"])
   try { adb("shell", "pm", "grant", P, `android.permission.${perm}`); } catch {}
 adb("shell", "cmd", "notification", "allow_listener", `${P}/${P}.NotificationListener`);
 adb("shell", "cmd", "notification", "allow_dnd", P);
@@ -121,7 +138,7 @@ if (thread) {
 }
 r = await call("list_messages", { address: "5551234", box: "sent", limit: 5 });
 check(r.json?.messages?.some((m) => m.text === "live outbound sms"), "sent SMS appears in the sent box", r.json);
-check(r.json?.messages?.every((m) => !("contact_name" in m)), "messages carry numbers only", r.json?.messages);
+check(r.json?.messages?.some((m) => m.contact_name === "Ann Example"), "contact name resolved on messages", r.json?.messages);
 
 r = await call("list_devices");
 check(r.json?.devices?.length === 1 && r.json.devices[0].default, "connector sees exactly the emulator", r.json);

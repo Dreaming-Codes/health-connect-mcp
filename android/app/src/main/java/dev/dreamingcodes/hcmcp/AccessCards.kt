@@ -100,9 +100,10 @@ fun NotificationAccessCard() {
   }
 }
 
-private data class Access(val postNotifications: Boolean = false, val dnd: Boolean = false, val fullScreen: Boolean = false, val sms: Boolean = false)
+private data class Access(val postNotifications: Boolean = false, val dnd: Boolean = false, val fullScreen: Boolean = false, val sms: Boolean = false, val contacts: Boolean = false)
 
-private fun readAccess(ctx: Context) = Access(Capabilities.canPostNotifications(ctx), Capabilities.dndAccess(ctx), Calls.canFullScreen(ctx), Capabilities.SMS.all { ctx.has(it) })
+private fun readAccess(ctx: Context) = Access(Capabilities.canPostNotifications(ctx), Capabilities.dndAccess(ctx), Calls.canFullScreen(ctx),
+  Capabilities.SMS.all { ctx.has(it) }, Capabilities.CONTACTS.all { ctx.has(it) })
 
 @Composable
 fun PhoneAccessCard() {
@@ -129,7 +130,8 @@ fun PhoneAccessCard() {
       if (Build.VERSION.SDK_INT >= 34) AccessRow(access.fullScreen, "Full-screen incoming assistant calls") { open(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true) }
       AccessRow(access.dnd, "Alarms ring through Do Not Disturb") { open(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) }
       AccessRow(access.sms, "Read and send SMS") { runtimeLauncher.launch(Capabilities.SMS.toTypedArray()) }
-      if (deniedOnce && !access.sms) {
+      AccessRow(access.contacts, "Contact names in SMS") { runtimeLauncher.launch(Capabilities.CONTACTS.toTypedArray()) }
+      if (deniedOnce && !(access.sms && access.contacts)) {
         Text("If Android refuses or a switch is greyed out, open App info, tap ⋮ > Allow restricted settings, then try again. Sideloaded apps need this for SMS and notification access.",
           style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = { open(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, withPackage = true) }) { Text("Open App info") }

@@ -28,6 +28,7 @@ enum class Requirement(private val code: String, private val message: String, va
 object Capabilities {
   val POST_NOTIFICATIONS = if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
   val SMS = listOf(Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS)
+  val CONTACTS = listOf(Manifest.permission.READ_CONTACTS)
 
   fun canPostNotifications(ctx: Context) = POST_NOTIFICATIONS.all { ctx.has(it) } && ctx.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
   fun dndAccess(ctx: Context) = ctx.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
@@ -38,4 +39,5 @@ object Capabilities {
     .put("post_notifications", canPostNotifications(ctx))
     .put("dnd_access", dndAccess(ctx)).put("full_screen_intent", Calls.canFullScreen(ctx))
     .put("sms_read", ctx.has(Manifest.permission.READ_SMS)).put("sms_send", ctx.has(Manifest.permission.SEND_SMS))
+    .put("contacts", CONTACTS.all { ctx.has(it) })
 }

@@ -96,7 +96,7 @@ Weight measurements (kg) in the range.
 
 ## `list_messages`
 
-SMS and MMS messages, newest first. MMS returns text parts only. Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.
+SMS and MMS messages, newest first. Contact names are added when contacts permission is granted. MMS returns text parts only. Plain SMS/MMS only: RCS chats in Google Messages are not stored in Android's SMS/MMS provider and are not visible here.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|

@@ -90,7 +90,7 @@ export function buildServer(hub: Hub): McpServer {
   });
   phone("list_threads", `SMS/MMS conversations, newest first, with the other party's address and the last message snippet. ${SMS_ONLY}`,
     { limit: z.number().int().min(1).max(100).default(20), timezone: range.timezone }, (args) => inZone(args));
-  phone("list_messages", `SMS and MMS messages, newest first. MMS returns text parts only. ${SMS_ONLY}`, {
+  phone("list_messages", `SMS and MMS messages, newest first. Contact names are added when contacts permission is granted. MMS returns text parts only. ${SMS_ONLY}`, {
     thread_id: z.number().int().min(1).optional(),
     address: z.string().min(3).max(40).optional().describe("Only messages with this phone number (matched on trailing digits)"),
     since: iso.optional(),
