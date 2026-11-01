@@ -25,7 +25,7 @@ const response = ({ at, received_at, ...e }: StoredEvent, tz: string) =>
 const failure = (e: unknown) => ({ isError: true, content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }] });
 
 export function buildServer(hub: Hub): McpServer {
-  const server = new McpServer({ name: "android-connect", version: "0.7.1" });
+  const server = new McpServer({ name: "android-connect", version: "0.8.0" });
   const tool = <S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (args: ShapeOutput<S>) => Promise<unknown>) =>
     server.registerTool(name, { description, inputSchema: shape as z.ZodRawShape }, async (args) => {
       try {
@@ -88,11 +88,6 @@ export function buildServer(hub: Hub): McpServer {
       reply: z.object({ placeholder: z.string().max(60).optional() }).optional().describe("Make this a text reply action"),
     })).max(3).default([]).refine((a) => new Set(a.map((x) => x.id)).size === a.length, "action ids must be unique"),
   });
-  phone("get_location", "The phone's current location (GPS/network fix), or the last known fix if a fresh one is not available in time.", {
-    max_age_s: z.number().int().min(0).max(86400).default(120).describe("Accept a cached fix up to this old instead of waiting for a new one"),
-    timeout_s: z.number().int().min(1).max(12).default(10),
-    timezone,
-  }, (args) => inZone(args));
   phone("list_threads", `SMS/MMS conversations, newest first, with the other party's address and the last message snippet. ${SMS_ONLY}`,
     { limit: z.number().int().min(1).max(100).default(20), timezone: range.timezone }, (args) => inZone(args));
   phone("list_messages", `SMS and MMS messages, newest first. Contact names are added when contacts permission is granted. MMS returns text parts only. ${SMS_ONLY}`, {
@@ -108,8 +103,6 @@ export function buildServer(hub: Hub): McpServer {
     { to: z.string().regex(/^\+?[0-9][0-9 ()-]{2,24}$/, "phone number"), text: smsText });
   phone("reply_to_thread", `Send an SMS to the other party of a one-to-one thread from list_threads. Group threads are refused. ${SMS_ONLY}`,
     { thread_id: z.number().int().min(1), text: smsText });
-  phone("search_contacts", "Find contacts by name or phone number. Returns names, phone numbers with their type, and email addresses.",
-    { query: z.string().min(1).max(100), limit: z.number().int().min(1).max(50).default(10) });
 
   tool("get_notification_responses", "Taps, button presses and replies on notifications sent with send_notification, oldest first. Kept for 7 days. Set wait_seconds to wait for the first response. phone_time is the phone's clock at the tap, and received_at is when the Worker got it.", {
     notification_id: z.string().min(1).max(64).optional().describe("The tag returned by send_notification"),

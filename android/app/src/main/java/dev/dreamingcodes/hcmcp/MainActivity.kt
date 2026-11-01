@@ -219,7 +219,7 @@ fun BridgeScreen() {
       NotificationAccessCard()
       PhoneAccessCard()
 
-      Text("Only method names and times are shown here. Health values, notifications, messages, contacts and locations are never logged or stored by the app.",
+      Text("Only method names and times are shown here. Health values, notifications, messages and contact names are never logged or stored by the app.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Spacer(Modifier.height(8.dp))
